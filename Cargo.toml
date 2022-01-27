@@ -6,3 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ash = "0.35.1"
+tobj = "3.2.0"
+winit = "0.26.1"
