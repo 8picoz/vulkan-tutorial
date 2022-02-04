@@ -44,6 +44,15 @@ impl VulkanApp {
     }
 }
 
+impl Drop for VulkanApp {
+    fn drop(&mut self) {
+        log::debug!("Dropping application.");
+        unsafe {
+            self.instance.destroy_instance(None); //ライフタイムが聞いてても呼ばないと駄目
+        }
+    }
+}
+
 fn main() {
     env_logger::init();
     match VulkanApp::new() {
