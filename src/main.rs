@@ -3,7 +3,12 @@ mod khr_util;
 use std::{error::Error, result::Result, ffi::{CString, CStr, c_void}};
 use ash::{vk, Entry, Instance, extensions::ext::DebugUtils};
 
+#[cfg(debug_assertions)]
 const ENABLE_VALIDATION_LAYERS: bool = true;
+
+#[cfg(not(debug_assertions))]
+const ENABLE_VALIDATION_LAYERS: bool = false;
+
 const REQUIRED_LAYERS: [&'static str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
 unsafe extern "system" fn vulkan_debug_callback(
