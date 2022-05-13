@@ -1,7 +1,13 @@
 mod khr_util;
 
-use std::{error::Error, result::Result, ffi::{CString, CStr, c_void}};
-use ash::{vk, Entry, Instance, extensions::ext::DebugUtils};
+use ash::prelude::VkResult;
+use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
+use log::log;
+use std::{
+    error::Error,
+    ffi::{c_void, CStr, CString},
+    result::Result,
+};
 
 #[cfg(debug_assertions)]
 const ENABLE_VALIDATION_LAYERS: bool = true;
@@ -30,6 +36,7 @@ unsafe extern "system" fn vulkan_debug_callback(
 
     log::debug!("validation layer: {:?}", message);
 
+    //返り値はValidation Layerを中止するべきかどうかを返す
     vk::FALSE
 }
 
@@ -44,6 +51,13 @@ impl VulkanApp {
 
         let entry = unsafe { Entry::load().expect("Failed to create entry.") };
         let instance = Self::create_instance(&entry)?;
+
+        if ENABLE_VALIDATION_LAYERS {
+            let debugUtils = DebugUtils::new(&entry, &instance);
+
+            let debugUtilsMessengerExt =
+                Self::setup_debug_messenger(debugUtils).unwrap_or_else(|e| log::error!(e));
+        }
 
         Ok(Self {
             _entry: entry,
@@ -64,9 +78,11 @@ impl VulkanApp {
             .api_version(vk::make_api_version(0, 1, 2, 0)) //Vulkan自体のバージョン
             .build();
 
-        let mut extension_names = khr_util::require_extension_names(); //本家チュートリアルではglfwGetRequiredInstanceExtensions
+        let mut extension_names = khr_util::require_extension_names(); //本家チュートリアルではgetRequiredExtensions(glfwGetRequiredInstanceExtensions)
+
         //検証レイヤーでのデバック時にコールバックを設定できるように拡張機能を有効にする
         if ENABLE_VALIDATION_LAYERS {
+            //DebugUtils::name()がVK_EXT_DEBUG_UTILS_EXTENSION_NAME
             extension_names.push(DebugUtils::name().as_ptr());
         }
 
@@ -82,15 +98,18 @@ impl VulkanApp {
         let mut instance_create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
             .enabled_extension_names(&extension_names);
+
         if ENABLE_VALIDATION_LAYERS {
             Self::check_validation_layer_support(entry);
+
+            //enabled_layer_countのセットはenabled_layer_namesの中に入っている
             instance_create_info = instance_create_info.enabled_layer_names(&layer_names_ptrs);
         }
 
         unsafe { Ok(entry.create_instance(&instance_create_info, None)?) } //基本的に本家で返り値がVkResultなものはResult型で値が包まれて返ってくるので引数も減る
     }
 
-    //検証レイヤーが有効かどうか
+    //指定されたレイヤーの検証レイヤーが有効かどうか
     fn check_validation_layer_support(entry: &Entry) {
         for required in REQUIRED_LAYERS.iter() {
             let found = entry
@@ -107,6 +126,26 @@ impl VulkanApp {
                 panic!("Validation layer not supported: {}", required);
             }
         }
+    }
+
+    fn setup_debug_messenger(debugUtils: DebugUtils) -> VkResult<vk::DebugUtilsMessengerEXT> {
+        let createInfo = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+            //受け取ったメッセージの内容の危険度
+            .message_severity(
+                vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
+                    | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                    | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
+            )
+            //メッセージの種類
+            .message_type(
+                vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                    | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                    | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+            )
+            .pfn_user_callback(Some(vulkan_debug_callback))
+            .build();
+
+        unsafe { debugUtils.create_debug_utils_messenger(&createInfo, None) }
     }
 }
 
