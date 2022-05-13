@@ -9,12 +9,20 @@ const ENABLE_VALIDATION_LAYERS: bool = true;
 #[cfg(not(debug_assertions))]
 const ENABLE_VALIDATION_LAYERS: bool = false;
 
+//Validation Layerで必要な機能一覧
 const REQUIRED_LAYERS: [&'static str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
 unsafe extern "system" fn vulkan_debug_callback(
+    //受け取ったメッセージの重要度が入ったフラグ
+    //比較対象の重要度より悪い状況かどうかはbitで来るので等号以外にも大なり小なりで比較することができる
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    //仕様とは違う使い方をしたりなどの原因が含まれる
     message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    //pMessage : null終端文字学組まれたデバッグメッセージ
+    //pObjects : Vulkan object handles
+    //objectCount : Number of objects in array
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    //任意のデータを設定できる
     p_user_data: *mut c_void,
 ) -> vk::Bool32 {
     let data = *p_callback_data;
