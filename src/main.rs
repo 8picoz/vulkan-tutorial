@@ -1,6 +1,7 @@
 mod khr_util;
 
 use ash::prelude::VkResult;
+use ash::vk::DebugUtilsMessengerEXT;
 use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
 use log::log;
 use std::{
@@ -43,6 +44,8 @@ unsafe extern "system" fn vulkan_debug_callback(
 struct VulkanApp {
     _entry: Entry,
     instance: Instance,
+    debug_utils: Option<DebugUtils>,
+    debug_utils_messenger_ext: Option<DebugUtilsMessengerEXT>,
 }
 
 impl VulkanApp {
@@ -52,16 +55,23 @@ impl VulkanApp {
         let entry = unsafe { Entry::load().expect("Failed to create entry.") };
         let instance = Self::create_instance(&entry)?;
 
-        if ENABLE_VALIDATION_LAYERS {
-            let debugUtils = DebugUtils::new(&entry, &instance);
+        let mut debug_utils = None;
+        let mut debug_utils_messenger_ext = None;
 
-            let debugUtilsMessengerExt =
-                Self::setup_debug_messenger(debugUtils).unwrap_or_else(|e| log::error!(e));
+        if ENABLE_VALIDATION_LAYERS {
+            let debug_utils = Some(DebugUtils::new(&entry, &instance));
+
+            debug_utils_messenger_ext = Some(
+                Self::setup_debug_utils_messenger_ext(&debug_utils)
+                    .unwrap_or_else(|e| panic!("{}", e)),
+            );
         }
 
         Ok(Self {
             _entry: entry,
             instance,
+            debug_utils,
+            debug_utils_messenger_ext,
         })
     }
 
@@ -128,8 +138,10 @@ impl VulkanApp {
         }
     }
 
-    fn setup_debug_messenger(debugUtils: DebugUtils) -> VkResult<vk::DebugUtilsMessengerEXT> {
-        let createInfo = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+    fn setup_debug_utils_messenger_ext(
+        debug_utils: &DebugUtils,
+    ) -> VkResult<DebugUtilsMessengerEXT> {
+        let create_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             //受け取ったメッセージの内容の危険度
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
@@ -145,7 +157,8 @@ impl VulkanApp {
             .pfn_user_callback(Some(vulkan_debug_callback))
             .build();
 
-        unsafe { debugUtils.create_debug_utils_messenger(&createInfo, None) }
+        //よくVkDebugReportCallbackで代用しているのを見る
+        unsafe { debug_utils.create_debug_utils_messenger(&create_info, None) }
     }
 }
 
@@ -153,6 +166,14 @@ impl Drop for VulkanApp {
     fn drop(&mut self) {
         log::debug!("Dropping application.");
         unsafe {
+            if let Some(debug_utils) = &self.debug_utils {
+                debug_utils.destroy_debug_utils_messenger(
+                    self.debug_utils_messenger_ext
+                        .expect("DebugUtilsMessengerEXTが存在しません"),
+                    None,
+                );
+            }
+
             self.instance.destroy_instance(None); //ライフタイムが聞いてても呼ばないと駄目
         }
     }
