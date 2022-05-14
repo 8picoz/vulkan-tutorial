@@ -59,12 +59,14 @@ impl VulkanApp {
         let mut debug_utils_messenger_ext = None;
 
         if ENABLE_VALIDATION_LAYERS {
-            let debug_utils = Some(DebugUtils::new(&entry, &instance));
+            let _debug_utils = DebugUtils::new(&entry, &instance);
 
             debug_utils_messenger_ext = Some(
-                Self::setup_debug_utils_messenger_ext(&debug_utils)
+                Self::setup_debug_utils_messenger_ext(&_debug_utils)
                     .unwrap_or_else(|e| panic!("{}", e)),
             );
+
+            debug_utils = Some(_debug_utils);
         }
 
         Ok(Self {
