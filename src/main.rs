@@ -1,7 +1,7 @@
 mod khr_util;
 
 use ash::prelude::VkResult;
-use ash::vk::DebugUtilsMessengerEXT;
+use ash::vk::{DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT};
 use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
 use log::log;
 use std::{
@@ -69,6 +69,8 @@ impl VulkanApp {
             debug_utils = Some(_debug_utils);
         }
 
+        Self::pick_physical_device();
+
         Ok(Self {
             _entry: entry,
             instance,
@@ -114,11 +116,34 @@ impl VulkanApp {
         if ENABLE_VALIDATION_LAYERS {
             Self::check_validation_layer_support(entry);
 
+            let debug_create_info = Self::populate_debug_messenger_create_info();
+
             //enabled_layer_countのセットはenabled_layer_namesの中に入っている
             instance_create_info = instance_create_info.enabled_layer_names(&layer_names_ptrs);
+            //勉強のために型の変換の遷移を書いているが as *const _ as _;でも可
+            instance_create_info.p_next =
+                &debug_create_info as *const DebugUtilsMessengerCreateInfoEXT as *const c_void;
         }
 
         unsafe { Ok(entry.create_instance(&instance_create_info, None)?) } //基本的に本家で返り値がVkResultなものはResult型で値が包まれて返ってくるので引数も減る
+    }
+
+    fn pick_physical_device(instance: &Instance) {
+        let devices = unsafe {
+            instance
+                .enumerate_physical_devices()
+                .expect("物理デバイスが取得できませんでした")
+        };
+
+        let device = devices
+            .into_iter()
+            .find(|devices| Self::is_device_suitable(instance, *devices))
+            .expect("最適なPhysical Deviceが存在しません");
+    }
+
+    //実行したい動作に対して適しているかどうかを判定
+    fn is_device_suitable(instance: &Instance, device: vk::PhysicalDevice) -> bool {
+        true
     }
 
     //指定されたレイヤーの検証レイヤーが有効かどうか
@@ -140,10 +165,9 @@ impl VulkanApp {
         }
     }
 
-    fn setup_debug_utils_messenger_ext(
-        debug_utils: &DebugUtils,
-    ) -> VkResult<DebugUtilsMessengerEXT> {
-        let create_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+    //DebugUtilsMessengerCreateInfoEXTを作成するためのもの
+    fn populate_debug_messenger_create_info() -> DebugUtilsMessengerCreateInfoEXT {
+        DebugUtilsMessengerCreateInfoEXT::builder()
             //受け取ったメッセージの内容の危険度
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
@@ -157,7 +181,14 @@ impl VulkanApp {
                     | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
             )
             .pfn_user_callback(Some(vulkan_debug_callback))
-            .build();
+            .build()
+    }
+
+    // DebugUtilsMessengerEXTはデバック情報をvulkan_debug_callbackに渡すためのもの
+    fn setup_debug_utils_messenger_ext(
+        debug_utils: &DebugUtils,
+    ) -> VkResult<DebugUtilsMessengerEXT> {
+        let create_info = Self::populate_debug_messenger_create_info();
 
         //よくVkDebugReportCallbackで代用しているのを見る
         unsafe { debug_utils.create_debug_utils_messenger(&create_info, None) }
