@@ -1,5 +1,6 @@
 use crate::khr_util;
 
+use crate::queue_family::QueueFamilyIndices;
 use ash::prelude::VkResult;
 use ash::vk::{DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT};
 use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
@@ -127,7 +128,7 @@ impl VulkanApp {
         unsafe { Ok(entry.create_instance(&instance_create_info, None)?) } //基本的に本家で返り値がVkResultなものはResult型で値が包まれて返ってくるので引数も減る
     }
 
-    fn pick_physical_device(instance: &Instance) {
+    fn pick_physical_device(instance: &Instance) -> vk::PhysicalDevice {
         let devices = unsafe {
             instance
                 .enumerate_physical_devices()
@@ -136,39 +137,16 @@ impl VulkanApp {
 
         let device = devices
             .into_iter()
-            .find(|devices| Self::is_device_suitable(instance, *devices))
+            .find(|devices| QueueFamilyIndices::is_device_suitable(instance, *devices))
             .expect("最適なPhysical Deviceが存在しません");
-    }
 
-    //実行したい動作に対して適しているかどうかを判定
-    #[allow(dead_code)]
-    fn is_device_suitable(instance: &Instance, device: vk::PhysicalDevice) -> bool {
-        let device_properties = unsafe { instance.get_physical_device_properties(device) };
-        let device_features = unsafe { instance.get_physical_device_features(device) };
+        let props = unsafe { instance.get_physical_device_properties(device) };
 
-        device_properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU
-            && device_features.geometry_shader > 0
-    }
+        log::info!("Selected physical device: {:?}", unsafe {
+            CStr::from_ptr(props.device_name.as_ptr())
+        });
 
-    //is_device_suitableの採点版
-    #[allow(dead_code)]
-    fn rate_device_suitability(instance: &Instance, device: vk::PhysicalDevice) -> usize {
-        let mut score = 0;
-
-        let device_properties = unsafe { instance.get_physical_device_properties(device) };
-        let device_features = unsafe { instance.get_physical_device_features(device) };
-
-        if device_properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU {
-            score += 1000;
-        }
-
-        score += device_properties.limits.max_image_dimension2_d as usize;
-
-        if device_features.geometry_shader == 0 {
-            return 0;
-        }
-
-        score
+        device
     }
 
     //指定されたレイヤーの検証レイヤーが有効かどうか

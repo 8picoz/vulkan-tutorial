@@ -1,7 +1,12 @@
+use std::env;
+
 mod khr_util;
+mod queue_family;
 mod vulkan_app;
 
 fn main() {
+    env::set_var("RUST_LOG", "info");
+    //env::set_var("RUST_LOG", "DEBUG");
     env_logger::init();
     match vulkan_app::VulkanApp::new() {
         Ok(mut app) => app.run(),
