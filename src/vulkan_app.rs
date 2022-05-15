@@ -2,7 +2,7 @@ use crate::khr_util;
 
 use crate::queue_family::QueueFamilyIndices;
 use ash::prelude::VkResult;
-use ash::vk::{DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT};
+use ash::vk::{DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice};
 use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
 use std::{
     error::Error,
@@ -44,8 +44,13 @@ unsafe extern "system" fn vulkan_debug_callback(
 pub struct VulkanApp {
     _entry: Entry,
     instance: Instance,
+    //物理デバイス
+    //こいつは保持する必要ないかも
+    physical_device: PhysicalDevice,
     debug_utils: Option<DebugUtils>,
     debug_utils_messenger_ext: Option<DebugUtilsMessengerEXT>,
+    //倫理デバイス
+    device: ash::Device,
 }
 
 impl VulkanApp {
@@ -69,13 +74,17 @@ impl VulkanApp {
             debug_utils = Some(_debug_utils);
         }
 
-        Self::pick_physical_device(&instance);
+        let physical_device = Self::pick_physical_device(&instance);
+
+        let device = Self::pick_device(&instance, physical_device).unwrap();
 
         Ok(Self {
             _entry: entry,
             instance,
+            physical_device,
             debug_utils,
             debug_utils_messenger_ext,
+            device,
         })
     }
 
@@ -129,24 +138,61 @@ impl VulkanApp {
     }
 
     fn pick_physical_device(instance: &Instance) -> vk::PhysicalDevice {
-        let devices = unsafe {
+        let physical_devices = unsafe {
             instance
                 .enumerate_physical_devices()
                 .expect("物理デバイスが取得できませんでした")
         };
 
-        let device = devices
+        let physical_device = physical_devices
             .into_iter()
             .find(|devices| QueueFamilyIndices::is_device_suitable(instance, *devices))
             .expect("最適なPhysical Deviceが存在しません");
 
-        let props = unsafe { instance.get_physical_device_properties(device) };
+        let props = unsafe { instance.get_physical_device_properties(physical_device) };
 
         log::info!("Selected physical device: {:?}", unsafe {
             CStr::from_ptr(props.device_name.as_ptr())
         });
 
-        device
+        physical_device
+    }
+
+    //論理デバイスを取得
+    fn pick_device(
+        instance: &Instance,
+        physical_device: vk::PhysicalDevice,
+    ) -> VkResult<ash::Device> {
+        let indices = QueueFamilyIndices::find_queue_families(instance, physical_device);
+
+        //倫理デバイスが対応しているキューを取得する
+        let queue_create_info = [vk::DeviceQueueCreateInfo::builder()
+            .queue_family_index(indices.graphics_family.expect("値が存在しません"))
+            .queue_priorities(&[1.0f32])
+            .build()];
+
+        //queue_family.rsで検索したgeometry shaderのような機能を使用できるかどうかを検索する時に使用する
+        let device_features = vk::PhysicalDeviceFeatures::builder().build();
+
+        let mut create_info = vk::DeviceCreateInfo::builder()
+            .queue_create_infos(&queue_create_info)
+            .enabled_features(&device_features);
+
+        let layer_names = REQUIRED_LAYERS
+            .iter()
+            .map(|name| CString::new(*name).expect("Failed to build CString"))
+            .collect::<Vec<_>>();
+        let layer_names_ptrs = layer_names
+            .iter()
+            .map(|name| name.as_ptr())
+            .collect::<Vec<_>>();
+
+        if ENABLE_VALIDATION_LAYERS {
+            create_info = create_info.enabled_layer_names(&layer_names_ptrs);
+        }
+
+        //存在しなかったりサポートされていない機能を有効にしようとするとエラーが出る
+        unsafe { instance.create_device(physical_device, &create_info, None) }
     }
 
     //指定されたレイヤーの検証レイヤーが有効かどうか
@@ -202,6 +248,8 @@ impl Drop for VulkanApp {
     fn drop(&mut self) {
         log::debug!("Dropping application.");
         unsafe {
+            self.device.destroy_device(None);
+
             if let Some(debug_utils) = &self.debug_utils {
                 debug_utils.destroy_debug_utils_messenger(
                     self.debug_utils_messenger_ext
