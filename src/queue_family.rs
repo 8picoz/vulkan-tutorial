@@ -2,6 +2,7 @@ use ash::vk::QueueFlags;
 use ash::{vk, Instance};
 
 pub struct QueueFamilyIndices {
+    //キューファミリーは番号で管理されている
     pub graphics_family: Option<u32>,
 }
 

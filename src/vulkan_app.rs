@@ -2,7 +2,7 @@ use crate::khr_util;
 
 use crate::queue_family::QueueFamilyIndices;
 use ash::prelude::VkResult;
-use ash::vk::{DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice};
+use ash::vk::{DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue};
 use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
 use std::{
     error::Error,
@@ -51,6 +51,7 @@ pub struct VulkanApp {
     debug_utils_messenger_ext: Option<DebugUtilsMessengerEXT>,
     //倫理デバイス
     device: ash::Device,
+    queue: Queue,
 }
 
 impl VulkanApp {
@@ -76,7 +77,7 @@ impl VulkanApp {
 
         let physical_device = Self::pick_physical_device(&instance);
 
-        let device = Self::pick_device(&instance, physical_device).unwrap();
+        let (device, queue) = Self::pick_device_and_queue(&instance, physical_device);
 
         Ok(Self {
             _entry: entry,
@@ -85,6 +86,7 @@ impl VulkanApp {
             debug_utils,
             debug_utils_messenger_ext,
             device,
+            queue,
         })
     }
 
@@ -137,7 +139,7 @@ impl VulkanApp {
         unsafe { Ok(entry.create_instance(&instance_create_info, None)?) } //基本的に本家で返り値がVkResultなものはResult型で値が包まれて返ってくるので引数も減る
     }
 
-    fn pick_physical_device(instance: &Instance) -> vk::PhysicalDevice {
+    fn pick_physical_device(instance: &Instance) -> PhysicalDevice {
         let physical_devices = unsafe {
             instance
                 .enumerate_physical_devices()
@@ -159,10 +161,10 @@ impl VulkanApp {
     }
 
     //論理デバイスを取得
-    fn pick_device(
+    fn pick_device_and_queue(
         instance: &Instance,
-        physical_device: vk::PhysicalDevice,
-    ) -> VkResult<ash::Device> {
+        physical_device: PhysicalDevice,
+    ) -> (ash::Device, Queue) {
         let indices = QueueFamilyIndices::find_queue_families(instance, physical_device);
 
         //倫理デバイスが対応しているキューを取得する
@@ -192,7 +194,15 @@ impl VulkanApp {
         }
 
         //存在しなかったりサポートされていない機能を有効にしようとするとエラーが出る
-        unsafe { instance.create_device(physical_device, &create_info, None) }
+        let device =
+            unsafe { instance.create_device(physical_device, &create_info, None) }.unwrap();
+
+        //論理デバイスからキューを作成、
+        //引数は必要なキューのキューファミリーの番号とキューインデックス
+        //キューインデックスは複数存在するキューのインデックス
+        let queue = unsafe { device.get_device_queue(indices.graphics_family.unwrap(), 0) };
+
+        (device, queue)
     }
 
     //指定されたレイヤーの検証レイヤーが有効かどうか
