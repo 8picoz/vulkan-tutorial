@@ -1,7 +1,6 @@
-use crate::khr_util;
+use crate::{debug, khr_util};
 
 use crate::queue_family::QueueFamilyIndices;
-use ash::prelude::VkResult;
 use ash::vk::{DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue};
 use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
 use std::{
@@ -17,29 +16,7 @@ const ENABLE_VALIDATION_LAYERS: bool = true;
 const ENABLE_VALIDATION_LAYERS: bool = false;
 
 //Validation Layerで必要な機能一覧
-const REQUIRED_LAYERS: [&'static str; 1] = ["VK_LAYER_KHRONOS_validation"];
-
-unsafe extern "system" fn vulkan_debug_callback(
-    //受け取ったメッセージの重要度が入ったフラグ
-    //比較対象の重要度より悪い状況かどうかはbitで来るので等号以外にも大なり小なりで比較することができる
-    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    //仕様とは違う使い方をしたりなどの原因が含まれる
-    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
-    //pMessage : null終端文字学組まれたデバッグメッセージ
-    //pObjects : Vulkan object handles
-    //objectCount : Number of objects in array
-    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
-    //任意のデータを設定できる
-    p_user_data: *mut c_void,
-) -> vk::Bool32 {
-    let data = *p_callback_data;
-    let message = CStr::from_ptr(data.p_message).to_string_lossy();
-
-    log::debug!("validation layer: {:?}", message);
-
-    //返り値はValidation Layerを中止するべきかどうかを返す
-    vk::FALSE
-}
+pub const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
 pub struct VulkanApp {
     _entry: Entry,
@@ -68,7 +45,7 @@ impl VulkanApp {
             let _debug_utils = DebugUtils::new(&entry, &instance);
 
             debug_utils_messenger_ext = Some(
-                Self::setup_debug_utils_messenger_ext(&_debug_utils)
+                debug::setup_debug_utils_messenger_ext(&_debug_utils)
                     .unwrap_or_else(|e| panic!("{}", e)),
             );
 
@@ -125,9 +102,9 @@ impl VulkanApp {
             .enabled_extension_names(&extension_names);
 
         if ENABLE_VALIDATION_LAYERS {
-            Self::check_validation_layer_support(entry);
+            debug::check_validation_layer_support(entry);
 
-            let debug_create_info = Self::populate_debug_messenger_create_info();
+            let debug_create_info = debug::populate_debug_messenger_create_info();
 
             //enabled_layer_countのセットはenabled_layer_namesの中に入っている
             instance_create_info = instance_create_info.enabled_layer_names(&layer_names_ptrs);
@@ -203,54 +180,6 @@ impl VulkanApp {
         let queue = unsafe { device.get_device_queue(indices.graphics_family.unwrap(), 0) };
 
         (device, queue)
-    }
-
-    //指定されたレイヤーの検証レイヤーが有効かどうか
-    fn check_validation_layer_support(entry: &Entry) {
-        for required in REQUIRED_LAYERS.iter() {
-            let found = entry
-                .enumerate_instance_layer_properties()
-                .unwrap()
-                .iter()
-                .any(|layer| {
-                    let name = unsafe { CStr::from_ptr(layer.layer_name.as_ptr()) };
-                    let name = name.to_str().expect("Failed to get layer name pointer");
-                    required == &name
-                });
-
-            if !found {
-                panic!("Validation layer not supported: {}", required);
-            }
-        }
-    }
-
-    //DebugUtilsMessengerCreateInfoEXTを作成するためのもの
-    fn populate_debug_messenger_create_info() -> DebugUtilsMessengerCreateInfoEXT {
-        DebugUtilsMessengerCreateInfoEXT::builder()
-            //受け取ったメッセージの内容の危険度
-            .message_severity(
-                vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
-            )
-            //メッセージの種類
-            .message_type(
-                vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-                    | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
-                    | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
-            )
-            .pfn_user_callback(Some(vulkan_debug_callback))
-            .build()
-    }
-
-    // DebugUtilsMessengerEXTはデバック情報をvulkan_debug_callbackに渡すためのもの
-    fn setup_debug_utils_messenger_ext(
-        debug_utils: &DebugUtils,
-    ) -> VkResult<DebugUtilsMessengerEXT> {
-        let create_info = Self::populate_debug_messenger_create_info();
-
-        //よくVkDebugReportCallbackで代用しているのを見る
-        unsafe { debug_utils.create_debug_utils_messenger(&create_info, None) }
     }
 }
 

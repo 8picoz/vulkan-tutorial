@@ -1,5 +1,6 @@
 use std::env;
 
+mod debug;
 mod khr_util;
 mod queue_family;
 mod vulkan_app;
