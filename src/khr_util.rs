@@ -3,8 +3,11 @@ use ash::prelude::VkResult;
 use ash::{vk, Entry, Instance, RawPtr};
 use std::mem;
 
+#[allow(dead_code)]
 pub fn require_extension_names() -> Vec<*const i8> {
-    vec![Surface::name().as_ptr(), Win32Surface::name().as_ptr()]
+    let surfaces = vec![Surface::name().as_ptr(), Win32Surface::name().as_ptr()];
+
+    surfaces
 }
 
 //WindowsのSurfaceを取るときの関数

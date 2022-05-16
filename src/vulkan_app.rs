@@ -7,12 +7,14 @@ use ash::vk::{
     ShaderResourceUsageAMDBuilder, SurfaceKHR,
 };
 use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
+use log::{debug, info};
 use std::{
     error::Error,
     ffi::{c_void, CStr, CString},
     result::Result,
 };
-use winit::event_loop::EventLoop;
+use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
 #[cfg(debug_assertions)]
@@ -25,22 +27,21 @@ const ENABLE_VALIDATION_LAYERS: bool = false;
 pub const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
 pub struct VulkanApp {
-    _entry: Entry,
-    _window: Window,
-    _event_loop: EventLoop<()>,
+    entry: Entry,
     instance: Instance,
     debug_utils: Option<DebugUtils>,
     debug_utils_messenger_ext: Option<DebugUtilsMessengerEXT>,
     //倫理デバイス
     device: ash::Device,
     queue: Queue,
+    //SurfaceKHRはハンドラ本体でSurfaceはラッパー？
     surface: Surface,
     surface_khr: SurfaceKHR,
 }
 
 impl VulkanApp {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        log::debug!("Creating application");
+    pub fn new(window: &Window) -> Result<Self, Box<dyn Error>> {
+        debug!("Creating application");
 
         let entry = unsafe { Entry::load().expect("Failed to create entry.") };
         let instance = Self::create_instance(&entry)?;
@@ -63,18 +64,46 @@ impl VulkanApp {
 
         let (device, queue) = Self::create_logical_device_and_queue(&instance, physical_device);
 
+        let (surface, surface_khr) = Self::create_surface(&instance, &entry, window);
+
         Ok(Self {
-            _entry: entry,
+            entry,
             instance,
             debug_utils,
             debug_utils_messenger_ext,
             device,
             queue,
+            surface,
+            surface_khr,
         })
     }
 
-    pub fn run(&mut self) {
-        log::info!("Running application");
+    pub fn run(&mut self, event_loop: EventLoop<()>) {
+        info!("Running application");
+
+        event_loop
+            .run(move |event, _, control_flow| {
+                *control_flow = ControlFlow::Poll;
+
+                match event {
+                    Event::WindowEvent { event, .. } => match event {
+                        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                        WindowEvent::KeyboardInput {
+                            input:
+                                KeyboardInput {
+                                    virtual_keycode: Some(VirtualKeyCode::Space),
+                                    state: ElementState::Released,
+                                    ..
+                                },
+                            ..
+                        } => {
+                            info!("Space!");
+                        }
+                        _ => (),
+                    },
+                    _ => (),
+                }
+            });
     }
 
     fn create_instance(entry: &Entry) -> Result<Instance, Box<dyn Error>> {
@@ -193,8 +222,11 @@ impl VulkanApp {
         entry: &Entry,
         window: &Window,
     ) -> (Surface, SurfaceKHR) {
-        let surface = Surface::new(entry, instance);
-        let surface_khr = unsafe { surface::create_surface(&entry, instance, window).unwrap() };
+        let surface = ash::extensions::khr::Surface::new(entry, instance);
+        let surface_khr =
+            unsafe { ash_window::create_surface(entry, instance, window, None).unwrap() };
+
+        info!("{:?}", surface_khr);
 
         (surface, surface_khr)
     }
@@ -205,6 +237,8 @@ impl Drop for VulkanApp {
         log::debug!("Dropping application.");
         unsafe {
             self.device.destroy_device(None);
+
+            self.surface.destroy_surface(self.surface_khr, None);
 
             if let Some(debug_utils) = &self.debug_utils {
                 debug_utils.destroy_debug_utils_messenger(
