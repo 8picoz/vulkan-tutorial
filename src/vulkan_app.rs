@@ -1,13 +1,19 @@
 use crate::{debug, khr_util};
 
 use crate::queue_family::QueueFamilyIndices;
-use ash::vk::{DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue};
+use ash::extensions::khr::Surface;
+use ash::vk::{
+    DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue,
+    ShaderResourceUsageAMDBuilder, SurfaceKHR,
+};
 use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
 use std::{
     error::Error,
     ffi::{c_void, CStr, CString},
     result::Result,
 };
+use winit::event_loop::EventLoop;
+use winit::window::Window;
 
 #[cfg(debug_assertions)]
 const ENABLE_VALIDATION_LAYERS: bool = true;
@@ -20,15 +26,16 @@ pub const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
 pub struct VulkanApp {
     _entry: Entry,
+    _window: Window,
+    _event_loop: EventLoop<()>,
     instance: Instance,
-    //物理デバイス
-    //こいつは保持する必要ないかも
-    physical_device: PhysicalDevice,
     debug_utils: Option<DebugUtils>,
     debug_utils_messenger_ext: Option<DebugUtilsMessengerEXT>,
     //倫理デバイス
     device: ash::Device,
     queue: Queue,
+    surface: Surface,
+    surface_khr: SurfaceKHR,
 }
 
 impl VulkanApp {
@@ -54,12 +61,11 @@ impl VulkanApp {
 
         let physical_device = Self::pick_physical_device(&instance);
 
-        let (device, queue) = Self::pick_device_and_queue(&instance, physical_device);
+        let (device, queue) = Self::create_logical_device_and_queue(&instance, physical_device);
 
         Ok(Self {
             _entry: entry,
             instance,
-            physical_device,
             debug_utils,
             debug_utils_messenger_ext,
             device,
@@ -138,7 +144,7 @@ impl VulkanApp {
     }
 
     //論理デバイスを取得
-    fn pick_device_and_queue(
+    fn create_logical_device_and_queue(
         instance: &Instance,
         physical_device: PhysicalDevice,
     ) -> (ash::Device, Queue) {
@@ -180,6 +186,17 @@ impl VulkanApp {
         let queue = unsafe { device.get_device_queue(indices.graphics_family.unwrap(), 0) };
 
         (device, queue)
+    }
+
+    fn create_surface(
+        instance: &Instance,
+        entry: &Entry,
+        window: &Window,
+    ) -> (Surface, SurfaceKHR) {
+        let surface = Surface::new(entry, instance);
+        let surface_khr = unsafe { surface::create_surface(&entry, instance, window).unwrap() };
+
+        (surface, surface_khr)
     }
 }
 
