@@ -3,8 +3,7 @@ use crate::{debug, khr_util};
 use crate::queue_family::QueueFamilyIndices;
 use ash::extensions::khr::Surface;
 use ash::vk::{
-    DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue,
-    ShaderResourceUsageAMDBuilder, SurfaceKHR,
+    DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue, SurfaceKHR,
 };
 use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
 use log::{debug, info};

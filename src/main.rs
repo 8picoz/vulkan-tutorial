@@ -1,5 +1,5 @@
 use crate::window_handlers::WindowHandlers;
-use log::info;
+
 use std::env;
 
 mod debug;
