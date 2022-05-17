@@ -32,7 +32,8 @@ pub struct VulkanApp {
     debug_utils_messenger_ext: Option<DebugUtilsMessengerEXT>,
     //倫理デバイス
     device: ash::Device,
-    queue: Queue,
+    graphics_queue: Queue,
+    present_queue: Queue,
     //SurfaceKHRはハンドラ本体でSurfaceはラッパー？
     surface: Surface,
     surface_khr: SurfaceKHR,
@@ -63,7 +64,7 @@ impl VulkanApp {
 
         let physical_device = Self::pick_physical_device(&instance, &surface, surface_khr);
 
-        let (device, queue) = Self::create_logical_device_and_queue(
+        let (device, graphics_queue, present_queue) = Self::create_logical_device_and_queue(
             &instance,
             &surface,
             surface_khr,
@@ -76,7 +77,8 @@ impl VulkanApp {
             debug_utils,
             debug_utils_messenger_ext,
             device,
-            queue,
+            graphics_queue,
+            present_queue,
             surface,
             surface_khr,
         })
@@ -179,7 +181,7 @@ impl VulkanApp {
 
         let props = unsafe { instance.get_physical_device_properties(physical_device) };
 
-        log::info!("Selected physical device: {:?}", unsafe {
+        info!("Selected physical device: {:?}", unsafe {
             CStr::from_ptr(props.device_name.as_ptr())
         });
 
@@ -192,7 +194,7 @@ impl VulkanApp {
         surface: &Surface,
         surface_khr: SurfaceKHR,
         physical_device: PhysicalDevice,
-    ) -> (ash::Device, Queue) {
+    ) -> (ash::Device, Queue, Queue) {
         let indices = QueueFamilyIndices::find_queue_families(
             instance,
             surface,
@@ -233,9 +235,15 @@ impl VulkanApp {
         //論理デバイスからキューを作成、
         //引数は必要なキューのキューファミリーの番号とキューインデックス
         //キューインデックスは複数存在するキューのインデックス
-        let queue = unsafe { device.get_device_queue(indices.graphics_family.unwrap(), 0) };
 
-        (device, queue)
+        //グラフィックスファミリーキューインデックス
+        let graphics_queue =
+            unsafe { device.get_device_queue(indices.graphics_family.unwrap(), 0) };
+
+        //
+        let present_queue = unsafe { device.get_device_queue(indices.present_family.unwrap(), 0) };
+
+        (device, graphics_queue, present_queue)
     }
 
     fn create_surface(
@@ -243,7 +251,7 @@ impl VulkanApp {
         entry: &Entry,
         window: &Window,
     ) -> (Surface, SurfaceKHR) {
-        let surface = ash::extensions::khr::Surface::new(entry, instance);
+        let surface = Surface::new(entry, instance);
         let surface_khr =
             unsafe { ash_window::create_surface(entry, instance, window, None).unwrap() };
 
