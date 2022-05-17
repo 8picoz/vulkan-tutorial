@@ -59,11 +59,16 @@ impl VulkanApp {
             debug_utils = Some(_debug_utils);
         }
 
-        let physical_device = Self::pick_physical_device(&instance);
-
-        let (device, queue) = Self::create_logical_device_and_queue(&instance, physical_device);
-
         let (surface, surface_khr) = Self::create_surface(&instance, &entry, window);
+
+        let physical_device = Self::pick_physical_device(&instance, &surface, surface_khr);
+
+        let (device, queue) = Self::create_logical_device_and_queue(
+            &instance,
+            &surface,
+            surface_khr,
+            physical_device,
+        );
 
         Ok(Self {
             entry,
@@ -80,29 +85,28 @@ impl VulkanApp {
     pub fn run(&mut self, event_loop: EventLoop<()>) {
         info!("Running application");
 
-        event_loop
-            .run(move |event, _, control_flow| {
-                *control_flow = ControlFlow::Poll;
+        event_loop.run(move |event, _, control_flow| {
+            *control_flow = ControlFlow::Poll;
 
-                match event {
-                    Event::WindowEvent { event, .. } => match event {
-                        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                        WindowEvent::KeyboardInput {
-                            input:
-                                KeyboardInput {
-                                    virtual_keycode: Some(VirtualKeyCode::Space),
-                                    state: ElementState::Released,
-                                    ..
-                                },
-                            ..
-                        } => {
-                            info!("Space!");
-                        }
-                        _ => (),
-                    },
+            match event {
+                Event::WindowEvent { event, .. } => match event {
+                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                    WindowEvent::KeyboardInput {
+                        input:
+                            KeyboardInput {
+                                virtual_keycode: Some(VirtualKeyCode::Space),
+                                state: ElementState::Released,
+                                ..
+                            },
+                        ..
+                    } => {
+                        info!("Space!");
+                    }
                     _ => (),
-                }
-            });
+                },
+                _ => (),
+            }
+        });
     }
 
     fn create_instance(entry: &Entry) -> Result<Instance, Box<dyn Error>> {
@@ -150,7 +154,11 @@ impl VulkanApp {
         unsafe { Ok(entry.create_instance(&instance_create_info, None)?) } //基本的に本家で返り値がVkResultなものはResult型で値が包まれて返ってくるので引数も減る
     }
 
-    fn pick_physical_device(instance: &Instance) -> PhysicalDevice {
+    fn pick_physical_device(
+        instance: &Instance,
+        surface: &Surface,
+        surface_khr: SurfaceKHR,
+    ) -> PhysicalDevice {
         let physical_devices = unsafe {
             instance
                 .enumerate_physical_devices()
@@ -159,7 +167,14 @@ impl VulkanApp {
 
         let physical_device = physical_devices
             .into_iter()
-            .find(|devices| QueueFamilyIndices::is_device_suitable(instance, *devices))
+            .find(|physical_device| {
+                QueueFamilyIndices::is_device_suitable(
+                    instance,
+                    surface,
+                    surface_khr,
+                    *physical_device,
+                )
+            })
             .expect("最適なPhysical Deviceが存在しません");
 
         let props = unsafe { instance.get_physical_device_properties(physical_device) };
@@ -174,9 +189,16 @@ impl VulkanApp {
     //論理デバイスを取得
     fn create_logical_device_and_queue(
         instance: &Instance,
+        surface: &Surface,
+        surface_khr: SurfaceKHR,
         physical_device: PhysicalDevice,
     ) -> (ash::Device, Queue) {
-        let indices = QueueFamilyIndices::find_queue_families(instance, physical_device);
+        let indices = QueueFamilyIndices::find_queue_families(
+            instance,
+            surface,
+            surface_khr,
+            physical_device,
+        );
 
         //倫理デバイスが対応しているキューを取得する
         let queue_create_info = [vk::DeviceQueueCreateInfo::builder()

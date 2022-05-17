@@ -15,6 +15,7 @@ impl QueueFamilyIndices {
     fn new() -> Self {
         Self {
             graphics_family: None,
+            present_family: None,
         }
     }
 
@@ -56,8 +57,13 @@ impl QueueFamilyIndices {
 
     //実行したい動作に対して適しているかどうかを判定
     #[allow(dead_code)]
-    pub fn is_device_suitable(instance: &Instance, physical_device: vk::PhysicalDevice) -> bool {
-        let indices = Self::find_queue_families(instance, physical_device);
+    pub fn is_device_suitable(
+        instance: &Instance,
+        surface: &Surface,
+        surface_khr: vk::SurfaceKHR,
+        physical_device: vk::PhysicalDevice,
+    ) -> bool {
+        let indices = Self::find_queue_families(instance, surface, surface_khr, physical_device);
 
         indices.is_complete()
     }
