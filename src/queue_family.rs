@@ -1,7 +1,7 @@
 use ash::extensions::khr::Surface;
-use ash::vk::{QueueFlags, SurfaceKHR};
+use ash::vk::{QueueFlags};
 use ash::{vk, Instance};
-use log::debug;
+
 
 pub struct QueueFamilyIndices {
     //キューファミリーは番号で管理されている
