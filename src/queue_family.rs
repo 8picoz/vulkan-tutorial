@@ -1,9 +1,14 @@
-use ash::vk::QueueFlags;
+use ash::extensions::khr::Surface;
+use ash::vk::{QueueFlags, SurfaceKHR};
 use ash::{vk, Instance};
+use log::debug;
 
 pub struct QueueFamilyIndices {
     //キューファミリーは番号で管理されている
+    //描画コマンドに対応しているかどうか
     pub graphics_family: Option<u32>,
+    //プレゼンテーションに対応しているかどうか
+    pub present_family: Option<u32>,
 }
 
 impl QueueFamilyIndices {
@@ -16,16 +21,29 @@ impl QueueFamilyIndices {
     //デバイスがVK_QUEUE_GRAPHICS_BITのQueueFamilyに対応してるか探す関数
     pub fn find_queue_families(
         instance: &Instance,
-        physical_debive: vk::PhysicalDevice,
+        surface: &Surface,
+        surface_khr: vk::SurfaceKHR,
+        physical_device: vk::PhysicalDevice,
     ) -> QueueFamilyIndices {
         let queue_families =
-            unsafe { instance.get_physical_device_queue_family_properties(physical_debive) };
+            unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
         let mut queue_family_indices = Self::new();
 
+        //複数個のグラフィックスファミリーキューとプレゼンテーションファミリーキューの組み合わせが存在する？
         for (i, queue) in queue_families.iter().enumerate() {
+            //グラフィックスキューファミリーの確認
             if queue.queue_flags.contains(QueueFlags::GRAPHICS) {
                 queue_family_indices.graphics_family = Some(i as u32);
+            }
+
+            let present_support = unsafe {
+                surface.get_physical_device_surface_support(physical_device, i as u32, surface_khr)
+            };
+
+            //プレゼンテーションキューファミリーの確認
+            if present_support.unwrap() {
+                queue_family_indices.present_family = Some(i as u32);
             }
 
             if queue_family_indices.is_complete() {
@@ -69,7 +87,8 @@ impl QueueFamilyIndices {
         score
     }
 
+    //サポートするキューファミリの存在を確認できたかどうか
     fn is_complete(&self) -> bool {
-        self.graphics_family.is_some()
+        self.graphics_family.is_some() && self.present_family.is_some()
     }
 }
