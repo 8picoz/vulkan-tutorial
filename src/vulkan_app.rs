@@ -1,7 +1,7 @@
 use crate::{debug, khr_util};
 
 use crate::queue_family::QueueFamilyIndices;
-use ash::extensions::khr::Surface;
+use ash::extensions::khr::{Surface, Swapchain};
 use ash::vk::{
     DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue, SurfaceKHR,
 };
@@ -22,7 +22,8 @@ const ENABLE_VALIDATION_LAYERS: bool = true;
 #[cfg(not(debug_assertions))]
 const ENABLE_VALIDATION_LAYERS: bool = false;
 
-//Validation Layerで必要な機能一覧
+///Validation Layerで必要な機能一覧
+///今のAshだともっと良いやり方がある、Swapchainのやり方はその一例
 pub const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
 pub struct VulkanApp {

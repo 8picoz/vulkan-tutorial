@@ -1,7 +1,9 @@
-use ash::extensions::khr::Surface;
-use ash::vk::{QueueFlags};
+use crate::debug::check_validation_layer_support;
+use ash::extensions::khr::{Surface, Swapchain};
+use ash::vk::{PhysicalDevice, QueueFlags};
 use ash::{vk, Instance};
-
+use log::debug;
+use std::ffi::CStr;
 
 pub struct QueueFamilyIndices {
     //キューファミリーは番号で管理されている
@@ -65,7 +67,9 @@ impl QueueFamilyIndices {
     ) -> bool {
         let indices = Self::find_queue_families(instance, surface, surface_khr, physical_device);
 
-        indices.is_complete()
+        let extension_supported = Self::check_device_extension_support(instance, physical_device);
+
+        indices.is_complete() && extension_supported
     }
 
     //is_device_suitableの採点版
@@ -96,5 +100,36 @@ impl QueueFamilyIndices {
     //サポートするキューファミリの存在を確認できたかどうか
     fn is_complete(&self) -> bool {
         self.graphics_family.is_some() && self.present_family.is_some()
+    }
+
+    //使用を要求するデバイス拡張の名前一覧取得
+    fn get_required_device_extensions() -> [&'static CStr; 1] {
+        // presentation queueのサポートがされていればSwapchainのサポートもされていることになるがそれでも一応確認はしておいたほうが良い
+        [Swapchain::name()]
+    }
+
+    //使用を要求するデバイス拡張の存在確認
+    fn check_device_extension_support(
+        instance: &Instance,
+        physical_device: PhysicalDevice,
+    ) -> bool {
+        let extensions = unsafe {
+            instance
+                .enumerate_device_extension_properties(physical_device)
+                .unwrap()
+        };
+
+        for required in Self::get_required_device_extensions().iter() {
+            let found = extensions.iter().any(|ext| {
+                let name = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };
+                required == &name
+            });
+
+            if !found {
+                return false;
+            }
+        }
+
+        true
     }
 }
