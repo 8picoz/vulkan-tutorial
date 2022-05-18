@@ -1,6 +1,7 @@
 use crate::{debug, khr_util};
 
 use crate::queue_family::QueueFamilyIndices;
+use crate::required_names::get_required_device_extensions;
 use ash::extensions::khr::{Surface, Swapchain};
 use ash::vk::{
     DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue, SurfaceKHR,
@@ -212,8 +213,14 @@ impl VulkanApp {
         //queue_family.rsで検索したgeometry shaderのような機能を使用できるかどうかを検索する時に使用する
         let device_features = vk::PhysicalDeviceFeatures::builder().build();
 
+        let extension_names_ptr = get_required_device_extensions()
+            .iter()
+            .map(|name| name.as_ptr())
+            .collect::<Vec<_>>();
+
         let mut create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(&queue_create_info)
+            .enabled_extension_names(&extension_names_ptr)
             .enabled_features(&device_features);
 
         let layer_names = REQUIRED_LAYERS

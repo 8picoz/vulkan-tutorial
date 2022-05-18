@@ -1,8 +1,7 @@
-use crate::debug::check_validation_layer_support;
+use crate::required_names::get_required_device_extensions;
 use ash::extensions::khr::{Surface, Swapchain};
 use ash::vk::{PhysicalDevice, QueueFlags};
 use ash::{vk, Instance};
-use log::debug;
 use std::ffi::CStr;
 
 pub struct QueueFamilyIndices {
@@ -102,12 +101,6 @@ impl QueueFamilyIndices {
         self.graphics_family.is_some() && self.present_family.is_some()
     }
 
-    //使用を要求するデバイス拡張の名前一覧取得
-    fn get_required_device_extensions() -> [&'static CStr; 1] {
-        // presentation queueのサポートがされていればSwapchainのサポートもされていることになるがそれでも一応確認はしておいたほうが良い
-        [Swapchain::name()]
-    }
-
     //使用を要求するデバイス拡張の存在確認
     fn check_device_extension_support(
         instance: &Instance,
@@ -119,7 +112,7 @@ impl QueueFamilyIndices {
                 .unwrap()
         };
 
-        for required in Self::get_required_device_extensions().iter() {
+        for required in get_required_device_extensions().iter() {
             let found = extensions.iter().any(|ext| {
                 let name = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };
                 required == &name

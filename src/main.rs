@@ -5,6 +5,8 @@ use std::env;
 mod debug;
 mod khr_util;
 mod queue_family;
+mod required_names;
+mod swapchain_utils;
 mod vulkan_app;
 mod window_handlers;
 
