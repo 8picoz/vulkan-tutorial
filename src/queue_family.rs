@@ -1,5 +1,6 @@
 use crate::required_names::get_required_device_extensions;
-use ash::extensions::khr::{Surface, Swapchain};
+use crate::swap_chain_utils::SwapChainSupportDetails;
+use ash::extensions::khr::Surface;
 use ash::vk::{PhysicalDevice, QueueFlags};
 use ash::{vk, Instance};
 use std::ffi::CStr;
@@ -68,7 +69,17 @@ impl QueueFamilyIndices {
 
         let extension_supported = Self::check_device_extension_support(instance, physical_device);
 
-        indices.is_complete() && extension_supported
+        let mut swap_chain_adequate = false;
+
+        if extension_supported {
+            let swap_chain_support_details =
+                SwapChainSupportDetails::new(physical_device, surface, surface_khr);
+
+            swap_chain_adequate = !swap_chain_support_details.formats.is_empty()
+                && !swap_chain_support_details.present_modes.is_empty();
+        }
+
+        indices.is_complete() && extension_supported && swap_chain_adequate
     }
 
     //is_device_suitableの採点版

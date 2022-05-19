@@ -6,7 +6,7 @@ mod debug;
 mod khr_util;
 mod queue_family;
 mod required_names;
-mod swapchain_utils;
+mod swap_chain_utils;
 mod vulkan_app;
 mod window_handlers;
 

@@ -2,7 +2,7 @@ use crate::{debug, khr_util};
 
 use crate::queue_family::QueueFamilyIndices;
 use crate::required_names::get_required_device_extensions;
-use ash::extensions::khr::{Surface, Swapchain};
+use ash::extensions::khr::Surface;
 use ash::vk::{
     DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue, SurfaceKHR,
 };
