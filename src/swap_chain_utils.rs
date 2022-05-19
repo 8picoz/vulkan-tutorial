@@ -52,4 +52,14 @@ impl SwapChainSupportDetails {
 
         *self.formats.first().unwrap()
     }
+
+    pub fn choose_swap_present_mode(&self) -> vk::PresentModeKHR {
+        for available_present_mode in self.present_modes.clone() {
+            if available_present_mode == vk::PresentModeKHR::MAILBOX {
+                return available_present_mode;
+            }
+        }
+
+        vk::PresentModeKHR::FIFO
+    }
 }
