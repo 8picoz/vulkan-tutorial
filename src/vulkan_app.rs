@@ -2,12 +2,15 @@ use crate::{debug, khr_util};
 
 use crate::queue_family::QueueFamilyIndices;
 use crate::required_names::get_required_device_extensions;
-use ash::extensions::khr::Surface;
+use crate::swap_chain_utils::SwapChainSupportDetails;
+use ash::extensions::khr::{Surface, Swapchain};
 use ash::vk::{
-    DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue, SurfaceKHR,
+    DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue, SharingMode,
+    SurfaceKHR, SwapchainKHR,
 };
-use ash::{extensions::ext::DebugUtils, vk, Entry, Instance};
+use ash::{extensions::ext::DebugUtils, vk, Device, Entry, Instance};
 use log::{debug, info};
+use std::mem::swap;
 use std::{
     error::Error,
     ffi::{c_void, CStr, CString},
@@ -27,6 +30,7 @@ const ENABLE_VALIDATION_LAYERS: bool = false;
 ///今のAshだともっと良いやり方がある、Swapchainのやり方はその一例
 pub const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
+//メンバをOption<>地獄にしないためにはnewに関する関数をメソッドではなく関連関数にすることで回避する
 pub struct VulkanApp {
     entry: Entry,
     instance: Instance,
@@ -39,6 +43,8 @@ pub struct VulkanApp {
     //SurfaceKHRはハンドラ本体でSurfaceはラッパー？
     surface: Surface,
     surface_khr: SurfaceKHR,
+    swap_chain: Swapchain,
+    swap_chain_khr: SwapchainKHR,
 }
 
 impl VulkanApp {
@@ -73,6 +79,9 @@ impl VulkanApp {
             physical_device,
         );
 
+        let (swap_chain, swap_chain_khr) =
+            Self::create_swap_chain(&instance, &device, physical_device, &surface, surface_khr);
+
         Ok(Self {
             entry,
             instance,
@@ -83,6 +92,8 @@ impl VulkanApp {
             present_queue,
             surface,
             surface_khr,
+            swap_chain,
+            swap_chain_khr,
         })
     }
 
@@ -263,9 +274,100 @@ impl VulkanApp {
         let surface_khr =
             unsafe { ash_window::create_surface(entry, instance, window, None).unwrap() };
 
-        info!("{:?}", surface_khr);
+        info!("surface: {:?}", surface_khr);
 
         (surface, surface_khr)
+    }
+
+    fn create_swap_chain(
+        instance: &Instance,
+        device: &Device,
+        physical_device: PhysicalDevice,
+        surface: &Surface,
+        surface_khr: SurfaceKHR,
+    ) -> (Swapchain, SwapchainKHR) {
+        let swap_chain_support =
+            SwapChainSupportDetails::new(physical_device, surface, surface_khr);
+
+        let surface_format = swap_chain_support.choose_swap_surface_format();
+        let present_mode = swap_chain_support.choose_swap_present_mode();
+        let extent = swap_chain_support.choose_swap_extent();
+
+        //swapchainに含められる画像の枚数を決める
+        //少なすぎると空き容量がなくてレンダリングが止まってしまう
+        let mut image_count = swap_chain_support.capabilities.min_image_count + 1;
+
+        //max_image_countが0の場合は上限が存在しないという意味
+        if swap_chain_support.capabilities.max_image_count > 0
+            && image_count > swap_chain_support.capabilities.max_image_count
+        {
+            image_count = swap_chain_support.capabilities.max_image_count;
+        }
+
+        let mut create_info = vk::SwapchainCreateInfoKHR::builder()
+            .surface(surface_khr)
+            .min_image_count(image_count)
+            .image_format(surface_format.format)
+            .image_color_space(surface_format.color_space)
+            .image_extent(extent)
+            //各画像が持つレイヤの数
+            //ステレオコピックアプリケーションなどを作成する時に使用
+            //スタン時の演出とかにも使える？
+            .image_array_layers(1)
+            //Swapchain内の画像をどのように扱うかを指定
+            //今回は直接レンダリングするのでCOLOR_ATTACHMENTを採用
+            //別の場所に画像をレンダリングしてあとからメモリ操作などで送信するTRANSFER_DSTなどもある
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT);
+
+        let indices = QueueFamilyIndices::find_queue_families(
+            instance,
+            surface,
+            surface_khr,
+            physical_device,
+        );
+
+        //キューファミリーのindexを配列に
+        let queue_family_indices = [
+            indices.graphics_family.unwrap(),
+            indices.present_family.unwrap(),
+        ];
+
+        //SwapChainが扱う画像が複数の種類のキューファミリーがまたがって使用するかどうかの設定
+        //今回の場合はグラフィックスファミリーとプレゼンテーションファミリーが同一のキューかどうかを調べてそれぞれ設定を確認する
+        if indices.graphics_family.unwrap() != indices.present_family.unwrap() {
+            //CONCURRENTは画像の所有権の移動なしに複数のキューファミリーをまたがって使用することができる
+            create_info = create_info
+                .image_sharing_mode(SharingMode::CONCURRENT)
+                //CONCURRENTではどのキューファミリー間で所有権を共有するかを事前にしているする必要がある
+                .queue_family_indices(&queue_family_indices);
+        } else {
+            //EXCLUSIVEは１つのキューファミリが所有権を持ち、複数のキューファミリーをまたがって使用する場合は明示的に所有権を移動しなければならない
+            //パフォーマンス的には最高
+            create_info = create_info.image_sharing_mode(SharingMode::EXCLUSIVE);
+        }
+
+        let create_info = create_info
+            //swapchain内の画像に対して90度時計回りなどのtransformの変換を指定できる
+            //今回の場合は何もしない
+            .pre_transform(swap_chain_support.capabilities.current_transform)
+            //ほかウィンドウとのブレンドをどうするか指定
+            //OPAQUEはアルファを無視
+            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .present_mode(present_mode)
+            //他ウィンドウに隠れたピクセルをクリップするかどうか
+            .clipped(true)
+            //Vulkanではアプリケーションの実行中にスワップチェンが無効または最適化されなくなる可能性がある
+            //その場合はスワップチェーンを0から再度作らなければいけないため、その場合の古いSwapChainの参照を渡す
+            //今回はSwapChainは一つしか作らないことを仮定
+            .old_swapchain(vk::SwapchainKHR::null())
+            .build();
+
+        let swap_chain = Swapchain::new(instance, device);
+        let swap_chain_khr = unsafe { swap_chain.create_swapchain(&create_info, None).unwrap() };
+
+        info!("swapchain: {:?}", swap_chain_khr);
+
+        (swap_chain, swap_chain_khr)
     }
 }
 
@@ -276,6 +378,8 @@ impl Drop for VulkanApp {
             self.device.destroy_device(None);
 
             self.surface.destroy_surface(self.surface_khr, None);
+
+            self.swap_chain.destroy_swapchain(self.swap_chain_khr, None);
 
             if let Some(debug_utils) = &self.debug_utils {
                 debug_utils.destroy_debug_utils_messenger(
