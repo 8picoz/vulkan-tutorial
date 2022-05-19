@@ -45,6 +45,9 @@ pub struct VulkanApp {
     surface_khr: SurfaceKHR,
     swap_chain: Swapchain,
     swap_chain_khr: SwapchainKHR,
+    swap_chain_images: Vec<vk::Image>,
+    swap_chain_image_format: vk::Format,
+    swap_chain_extent: vk::Extent2D,
 }
 
 impl VulkanApp {
@@ -79,8 +82,11 @@ impl VulkanApp {
             physical_device,
         );
 
-        let (swap_chain, swap_chain_khr) =
+        let (swap_chain, swap_chain_khr, swap_chain_image_format, swap_chain_extent) =
             Self::create_swap_chain(&instance, &device, physical_device, &surface, surface_khr);
+
+        //imageのLifetimeはswapchainに紐づいているので明示的にDestoryする必要はない
+        let swap_chain_images = Self::get_swap_chain_image(&swap_chain, swap_chain_khr);
 
         Ok(Self {
             entry,
@@ -94,6 +100,9 @@ impl VulkanApp {
             surface_khr,
             swap_chain,
             swap_chain_khr,
+            swap_chain_images,
+            swap_chain_image_format,
+            swap_chain_extent,
         })
     }
 
@@ -285,7 +294,7 @@ impl VulkanApp {
         physical_device: PhysicalDevice,
         surface: &Surface,
         surface_khr: SurfaceKHR,
-    ) -> (Swapchain, SwapchainKHR) {
+    ) -> (Swapchain, SwapchainKHR, vk::Format, vk::Extent2D) {
         let swap_chain_support =
             SwapChainSupportDetails::new(physical_device, surface, surface_khr);
 
@@ -367,7 +376,14 @@ impl VulkanApp {
 
         info!("swapchain: {:?}", swap_chain_khr);
 
-        (swap_chain, swap_chain_khr)
+        (swap_chain, swap_chain_khr, surface_format.format, extent)
+    }
+
+    fn get_swap_chain_image(
+        swap_chain: &Swapchain,
+        swap_chain_khr: SwapchainKHR,
+    ) -> Vec<vk::Image> {
+        unsafe { swap_chain.get_swapchain_images(swap_chain_khr) }.unwrap()
     }
 }
 
