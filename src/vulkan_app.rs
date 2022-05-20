@@ -48,6 +48,7 @@ pub struct VulkanApp {
     swap_chain_images: Vec<vk::Image>,
     swap_chain_image_format: vk::Format,
     swap_chain_extent: vk::Extent2D,
+    swap_chain_image_views: Vec<vk::ImageView>,
 }
 
 impl VulkanApp {
@@ -88,6 +89,9 @@ impl VulkanApp {
         //imageのLifetimeはswapchainに紐づいているので明示的にDestoryする必要はない
         let swap_chain_images = Self::get_swap_chain_image(&swap_chain, swap_chain_khr);
 
+        let swap_chain_image_views =
+            Self::create_image_views(&device, &swap_chain_images, swap_chain_image_format);
+
         Ok(Self {
             entry,
             instance,
@@ -103,6 +107,7 @@ impl VulkanApp {
             swap_chain_images,
             swap_chain_image_format,
             swap_chain_extent,
+            swap_chain_image_views,
         })
     }
 
@@ -385,12 +390,65 @@ impl VulkanApp {
     ) -> Vec<vk::Image> {
         unsafe { swap_chain.get_swapchain_images(swap_chain_khr) }.unwrap()
     }
+
+    fn create_image_views(
+        device: &Device,
+        swap_chain_images: &Vec<vk::Image>,
+        swap_chain_image_format: vk::Format,
+    ) -> Vec<vk::ImageView> {
+        let mut swap_chain_image_views = vec![];
+
+        for image in swap_chain_images {
+            let create_info = vk::ImageViewCreateInfo::builder()
+                .image(*image)
+                //画像を1Dテクスチャ、2Dテクスチャ、3Dテクスチャ、キューマップとして扱うことができる
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(swap_chain_image_format)
+                .components(
+                    //swizzleなマッピングをすることができる
+                    //例えばモノクロなテクスチャを全て赤色に割り当てて出力したりなど
+                    //今回はすべてデフォルトで行う
+                    vk::ComponentMapping::builder()
+                        .r(vk::ComponentSwizzle::IDENTITY)
+                        .g(vk::ComponentSwizzle::IDENTITY)
+                        .b(vk::ComponentSwizzle::IDENTITY)
+                        .a(vk::ComponentSwizzle::IDENTITY)
+                        .build(),
+                )
+                .subresource_range(
+                    //画像自体の目的が何であるか
+                    //画像の土の部分にアクセスすべきかを書くことができる
+                    //今回はミップマップレベルやマルチレイヤーは無しで設定
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_mip_level(0)
+                        .level_count(0)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .build(),
+                )
+                .build();
+
+            swap_chain_image_views
+                .push(unsafe { device.create_image_view(&create_info, None).unwrap() });
+        }
+
+        info!("Create SwapChain Image View");
+
+        //テクスチャとして使う分には準備できているが、レンダーターゲットとしてはまだ設定が必要
+        //その設定とはフレームバッファと呼ばれるもう一段回のインダイレクトが必要だがこれを用意するのにまずグラフィックスパイプラインを設定する必要がある
+        swap_chain_image_views
+    }
 }
 
 impl Drop for VulkanApp {
     fn drop(&mut self) {
         log::debug!("Dropping application.");
         unsafe {
+            for image_view in self.swap_chain_image_views.clone() {
+                self.device.destroy_image_view(image_view, None);
+            }
+
             self.device.destroy_device(None);
 
             self.surface.destroy_surface(self.surface_khr, None);
