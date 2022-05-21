@@ -440,7 +440,16 @@ impl VulkanApp {
         swap_chain_image_views
     }
 
-    fn create_graphics_pipeline() {}
+    fn create_graphics_pipeline() {
+        //ここの環境変数はrust-gpu側が設定をしてくれる
+        const SHADER_PATH: &str = env!("rust_shader.spv");
+        const SHADER_CODE: &[u8] = include_bytes!(env!("rust_shader.spv"));
+
+        info!("Shader Path: {}", SHADER_PATH);
+        info!("Shader Length: {}", SHADER_CODE.len());
+
+        
+    }
 }
 
 impl Drop for VulkanApp {

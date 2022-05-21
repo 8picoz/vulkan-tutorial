@@ -17,13 +17,6 @@ fn main() {
     //env::set_var("RUST_LOG", "DEBUG");
     env_logger::init();
 
-    //シェーダー確認
-    const SHADER_PATH: &str = env!("rust_shader.spv");
-    const SHADER: &[u8] = include_bytes!(env!("rust_shader.spv"));
-
-    info!("Shader Path: {}", SHADER_PATH);
-    info!("Shader Length: {}", SHADER.len());
-
     let window_handlers = WindowHandlers::new();
 
     match vulkan_app::VulkanApp::new(&window_handlers.window) {
