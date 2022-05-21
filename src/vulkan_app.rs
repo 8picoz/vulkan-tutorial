@@ -10,7 +10,6 @@ use ash::vk::{
 };
 use ash::{extensions::ext::DebugUtils, vk, Device, Entry, Instance};
 use log::{debug, info};
-use std::mem::swap;
 use std::{
     error::Error,
     ffi::{c_void, CStr, CString},
@@ -452,7 +451,22 @@ impl VulkanApp {
 
         let shader_module = Self::create_shader_module(device, SHADER_CODE);
 
-        //graphics pipeline...
+        let vert_shader_stage_info = vk::PipelineShaderStageCreateInfo::builder()
+            //fragmentやvertexまたgeometryなどのどこのシェーダーステージの物なのかを指定する
+            .stage(vk::ShaderStageFlags::VERTEX)
+            .module(shader_module)
+            .name(CString::new("main_vs").unwrap().as_c_str())
+            //これはシェーダ内で定数を設定する時に外部から設定できるのでそのときに使用するもの
+            //.specialization_info()
+            .build();
+
+        let frag_shader_stage_info = vk::PipelineShaderStageCreateInfo::builder()
+            .stage(vk::ShaderStageFlags::FRAGMENT)
+            .module(shader_module)
+            .name(CString::new("main_fs").unwrap().as_c_str())
+            .build();
+
+        let shader_stages = [vert_shader_stage_info, frag_shader_stage_info];
 
         unsafe {
             //パイプラインの作成が終了したらモジュールはすぐに破棄して良い
