@@ -92,6 +92,8 @@ impl VulkanApp {
         let swap_chain_image_views =
             Self::create_image_views(&device, &swap_chain_images, swap_chain_image_format);
 
+        Self::create_graphics_pipeline(&device);
+
         Ok(Self {
             entry,
             instance,
@@ -440,7 +442,7 @@ impl VulkanApp {
         swap_chain_image_views
     }
 
-    fn create_graphics_pipeline() {
+    fn create_graphics_pipeline(device: &Device) {
         //ここの環境変数はrust-gpu側が設定をしてくれる
         const SHADER_PATH: &str = env!("rust_shader.spv");
         const SHADER_CODE: &[u8] = include_bytes!(env!("rust_shader.spv"));
@@ -448,7 +450,26 @@ impl VulkanApp {
         info!("Shader Path: {}", SHADER_PATH);
         info!("Shader Length: {}", SHADER_CODE.len());
 
-        
+        let shader_module = Self::create_shader_module(device, SHADER_CODE);
+
+        //graphics pipeline...
+
+        unsafe {
+            //パイプラインの作成が終了したらモジュールはすぐに破棄して良い
+            device.destroy_shader_module(shader_module, None);
+        }
+    }
+
+    fn create_shader_module(device: &Device, spirv_code: &[u8]) -> vk::ShaderModule {
+        //[u8]から[u32]に変換
+        //アライメントはSPIR-Vのコンパイラが保証しているものとする
+        let spirv_code = unsafe { std::mem::transmute::<&[u8], &[u32]>(spirv_code) };
+
+        let create_info = vk::ShaderModuleCreateInfo::builder()
+            .code(spirv_code)
+            .build();
+
+        unsafe { device.create_shader_module(&create_info, None).unwrap() }
     }
 }
 
