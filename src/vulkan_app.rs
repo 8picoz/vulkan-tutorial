@@ -439,6 +439,8 @@ impl VulkanApp {
         //その設定とはフレームバッファと呼ばれるもう一段回のインダイレクトが必要だがこれを用意するのにまずグラフィックスパイプラインを設定する必要がある
         swap_chain_image_views
     }
+
+    fn create_graphics_pipeline() {}
 }
 
 impl Drop for VulkanApp {
