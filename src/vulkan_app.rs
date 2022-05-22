@@ -442,6 +442,8 @@ impl VulkanApp {
     }
 
     fn create_graphics_pipeline(device: &Device) {
+        //Create Shader Module
+
         //ここの環境変数はrust-gpu側が設定をしてくれる
         const SHADER_PATH: &str = env!("rust_shader.spv");
         const SHADER_CODE: &[u8] = include_bytes!(env!("rust_shader.spv"));
@@ -467,6 +469,29 @@ impl VulkanApp {
             .build();
 
         let shader_stages = [vert_shader_stage_info, frag_shader_stage_info];
+
+        //Vertex Input
+
+        //頂点シェーダーに渡される頂点データの形式を指定
+        //今回は三角形の頂点データがシェーダーにハードコードされているので何も設定しなくて良い
+        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder()
+            //バインディングとはデータ感の間隔やデータが頂点ごとかインスタンスごとかの指定など
+            //.vertex_binding_descriptions()
+            //頂点シェーダーに渡される属性の指定またどのバインディングからロードするかやどのオフセットでロードするかなど
+            //.vertex_attribute_description_count()
+            .build();
+
+        //Input Assembly
+        //入力された頂点からどのようなトポロジでプリミティブを作成するかを設定
+
+        let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+            //トポロジの設定
+            //今回は3つずつ頂点を読み込んで描画
+            .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+            //トポロジの設定でSTRIP系の設定をしていると全てのプリミティブがつながってしまうので
+            //trueにすることでそのつながり部分を一度断ち切るようなindex値を設定できる
+            .primitive_restart_enable(false)
+            .build();
 
         unsafe {
             //パイプラインの作成が終了したらモジュールはすぐに破棄して良い
