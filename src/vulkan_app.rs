@@ -91,7 +91,7 @@ impl VulkanApp {
         let swap_chain_image_views =
             Self::create_image_views(&device, &swap_chain_images, swap_chain_image_format);
 
-        Self::create_graphics_pipeline(&device);
+        Self::create_graphics_pipeline(&device, swap_chain_extent);
 
         Ok(Self {
             entry,
@@ -441,7 +441,9 @@ impl VulkanApp {
         swap_chain_image_views
     }
 
-    fn create_graphics_pipeline(device: &Device) {
+    fn create_graphics_pipeline(device: &Device, swap_chain_extent: vk::Extent2D) {
+        //プログラマブルステージの設定
+
         //Create Shader Module
 
         //ここの環境変数はrust-gpu側が設定をしてくれる
@@ -481,6 +483,8 @@ impl VulkanApp {
             //.vertex_attribute_description_count()
             .build();
 
+        //固定機能ステージの設定
+
         //Input Assembly
         //入力された頂点からどのようなトポロジでプリミティブを作成するかを設定
 
@@ -491,6 +495,66 @@ impl VulkanApp {
             //トポロジの設定でSTRIP系の設定をしていると全てのプリミティブがつながってしまうので
             //trueにすることでそのつながり部分を一度断ち切るようなindex値を設定できる
             .primitive_restart_enable(false)
+            .build();
+
+        //Viewport
+
+        let viewport = vk::Viewport::builder()
+            //出力がレンダリングするフレームバッファの領域を指定
+            //x, yはスタート位置
+            .x(0.0)
+            .y(0.0)
+            //縦横のサイズ
+            .width(swap_chain_extent.width as _)
+            .height(swap_chain_extent.height as _)
+            .min_depth(0.0)
+            .max_depth(1.0)
+            .build();
+
+        //Scissor Rectangle
+
+        //Viewportはレンダリングされた画像をフレームバッファに対してどの位置に描画をするのか設定するものに対して
+        //Scissor Rectangleはレンダリングされた画像のどのピクセルを使用するかを指定
+        //https://vulkan-tutorial.com/images/viewports_scissors.png
+        let scissor = vk::Rect2D::builder()
+            .offset(vk::Offset2D::builder().x(0).y(0).build())
+            .extent(swap_chain_extent)
+            .build();
+
+        //viewportとscissor rectangleを統合
+        let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
+            //GPUによっては複数のviewportとscissor rectangleを使用することができる
+            .viewports(&[viewport])
+            .scissors(&[scissor])
+            .build();
+
+        let rasterizer = vk::PipelineRasterizationStateCreateInfo::builder()
+            //trueを設定した場合nearとfarを超えたフラグメントはカリングされるのではなくclampされる
+            //シャドウマップなどに有効
+            //GPUの機能を有効にする必要あり
+            .depth_clamp_enable(false)
+            //trueを設定した場合ラスタライザステージをスキップする
+            .rasterizer_discard_enable(false)
+            //フラグメントの生成方法
+            //input assemblyは実際に塗るかどうかの設定だが、これはフラグメントを作成するかどうかの判断(?)
+            //例えばFILLの場合はポリゴンの領域をフラグメントで埋める
+            //GPUの機能を有効にする必要あり
+            .polygon_mode(vk::PolygonMode::FILL)
+            //線の太さを設定
+            //最大値はGPUに依存する
+            //1.0以上を指定したい場合はwideLinesというGPUの機能を有効にする必要あり
+            .line_width(1.0)
+            //カリングの種類を指定
+            .cull_mode(vk::CullModeFlags::BACK)
+            //Vulkanは右回りが表面？
+            .front_face(vk::FrontFace::CLOCKWISE)
+            //深度値の設定
+            //フラグメントの偏りに基づいてバイアスを掛けたりして深度地を変更することができる
+            //これらはシャドウマッピングなどで使用される
+            .depth_bias_enable(false)
+            .depth_bias_constant_factor(0.0)
+            .depth_bias_clamp(0.0)
+            .depth_bias_slope_factor(0.0)
             .build();
 
         unsafe {
