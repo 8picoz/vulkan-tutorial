@@ -48,6 +48,7 @@ pub struct VulkanApp {
     swap_chain_image_format: vk::Format,
     swap_chain_extent: vk::Extent2D,
     swap_chain_image_views: Vec<vk::ImageView>,
+    pipeline_layout: vk::PipelineLayout,
 }
 
 impl VulkanApp {
@@ -91,7 +92,7 @@ impl VulkanApp {
         let swap_chain_image_views =
             Self::create_image_views(&device, &swap_chain_images, swap_chain_image_format);
 
-        Self::create_graphics_pipeline(&device, swap_chain_extent);
+        let pipeline_layout = Self::create_graphics_pipeline(&device, swap_chain_extent);
 
         Ok(Self {
             entry,
@@ -109,6 +110,7 @@ impl VulkanApp {
             swap_chain_image_format,
             swap_chain_extent,
             swap_chain_image_views,
+            pipeline_layout,
         })
     }
 
@@ -441,7 +443,10 @@ impl VulkanApp {
         swap_chain_image_views
     }
 
-    fn create_graphics_pipeline(device: &Device, swap_chain_extent: vk::Extent2D) {
+    fn create_graphics_pipeline(
+        device: &Device,
+        swap_chain_extent: vk::Extent2D,
+    ) -> vk::PipelineLayout {
         //プログラマブルステージの設定
 
         //Create Shader Module
@@ -557,10 +562,93 @@ impl VulkanApp {
             .depth_bias_slope_factor(0.0)
             .build();
 
+        //Multisampling
+
+        //マルチサンプリングはアンチエイリアスの方法の１つ
+        //GPUの機能を有効にする必要がある
+        let multisampling = vk::PipelineMultisampleStateCreateInfo::builder()
+            //今は無効化
+            .sample_shading_enable(false)
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1)
+            .min_sample_shading(1.0)
+            .alpha_to_coverage_enable(false)
+            .alpha_to_one_enable(false)
+            .build();
+
+        //Depth Stencil
+        //今はスキップ
+
+        //Color blending
+
+        //フレームバッファごとの設定
+        //現在はフレームバッファは１つしか存在しない
+        let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
+            .color_write_mask(
+                vk::ColorComponentFlags::R
+                    | vk::ColorComponentFlags::G
+                    | vk::ColorComponentFlags::B
+                    | vk::ColorComponentFlags::A,
+            )
+            //新しい色と古い色を混ぜるかどうか
+            //falseの場合はフラグメントシェーダーからの新しい色をそのまま使用する
+            .blend_enable(false)
+            //新しく来た色の寄与の割合(src_color_blend_factor * new_color的な感じ)
+            .src_color_blend_factor(vk::BlendFactor::ONE)
+            //もとから存在した色の寄与の割合(dst_color_blend_factor * old_color的な感じ)
+            .dst_color_blend_factor(vk::BlendFactor::ZERO)
+            //色を混ぜるときの演算子
+            .color_blend_op(vk::BlendOp::ADD)
+            //上記のalpha版
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
+            .alpha_blend_op(vk::BlendOp::ADD)
+            .build();
+
+        //全てのフレームバッファ構造体の設定
+        let color_blend = vk::PipelineColorBlendStateCreateInfo::builder()
+            //2つ目のブレンド方法
+            //ビット単位でのブレンドの演算を行うことができる
+            //これを有効にするとVkPipelineColorBlendAttachmentStateで有効にしたblend設定は無効になってしまうので注意
+            //vkPipelineColorBlendAttachmentStateで設定したcolor_write_maskは個々でも使用される
+            .logic_op_enable(false)
+            //ビット演算の演算子指定
+            .logic_op(vk::LogicOp::COPY)
+            .attachments(&[color_blend_attachment])
+            .blend_constants([0.0, 0.0, 0.0, 0.0])
+            .build();
+
+        //Dynamic State
+
+        //一度パイプラインの作成をしたあとに再作成をなしに変更できる値を設定
+        //ここではビューポートのサイズと線の幅
+        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::LINE_WIDTH];
+
+        //dynamic_stateは今後の章で扱うので今回は作るだけ作っておいてnullを入れておく
+        let dynamic_state = vk::PipelineDynamicStateCreateInfo::builder()
+            .dynamic_states(&dynamic_states)
+            .build();
+
+        //Pipeline layout
+
+        //この構造体はVertex Shaderに変換行列を渡したり、フラグメントシェーダーでテクスチャサンプラーを作成するために使用する
+        //これによってシェーダーを一回一回ビルドしなくても定数を外部から変えることで柔軟性を持たせることができる
+        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
+            //.set_layouts()
+            //.push_constant_ranges()
+            .build();
+
+        let pipeline_layout = unsafe {
+            device
+                .create_pipeline_layout(&pipeline_layout_info, None)
+                .unwrap()
+        };
+
         unsafe {
             //パイプラインの作成が終了したらモジュールはすぐに破棄して良い
             device.destroy_shader_module(shader_module, None);
         }
+
+        pipeline_layout
     }
 
     fn create_shader_module(device: &Device, spirv_code: &[u8]) -> vk::ShaderModule {
@@ -589,6 +677,9 @@ impl Drop for VulkanApp {
             self.surface.destroy_surface(self.surface_khr, None);
 
             self.swap_chain.destroy_swapchain(self.swap_chain_khr, None);
+
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
 
             if let Some(debug_utils) = &self.debug_utils {
                 debug_utils.destroy_debug_utils_messenger(
