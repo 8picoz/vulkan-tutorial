@@ -5,8 +5,8 @@ use crate::required_names::get_required_device_extensions;
 use crate::swap_chain_utils::SwapChainSupportDetails;
 use ash::extensions::khr::{Surface, Swapchain};
 use ash::vk::{
-    DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, PhysicalDevice, Queue, SharingMode,
-    SurfaceKHR, SwapchainKHR,
+    DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, Format, PhysicalDevice, Queue,
+    SharingMode, SurfaceKHR, SwapchainKHR,
 };
 use ash::{extensions::ext::DebugUtils, vk, Device, Entry, Instance};
 use log::{debug, info};
@@ -91,6 +91,8 @@ impl VulkanApp {
 
         let swap_chain_image_views =
             Self::create_image_views(&device, &swap_chain_images, swap_chain_image_format);
+
+        Self::create_render_pass(swap_chain_image_format);
 
         let pipeline_layout = Self::create_graphics_pipeline(&device, swap_chain_extent);
 
@@ -391,6 +393,7 @@ impl VulkanApp {
         swap_chain: &Swapchain,
         swap_chain_khr: SwapchainKHR,
     ) -> Vec<vk::Image> {
+        //swapchainで保持している画像のハンドルを取得する
         unsafe { swap_chain.get_swapchain_images(swap_chain_khr) }.unwrap()
     }
 
@@ -623,7 +626,7 @@ impl VulkanApp {
         //ここではビューポートのサイズと線の幅
         let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::LINE_WIDTH];
 
-        //dynamic_stateは今後の章で扱うので今回は作るだけ作っておいてnullを入れておく
+        //dynamic_stateは今後の章で扱うので今回は作るだけ作っておいて実際に設定する部分にはnullを入れておく
         let dynamic_state = vk::PipelineDynamicStateCreateInfo::builder()
             .dynamic_states(&dynamic_states)
             .build();
@@ -661,6 +664,49 @@ impl VulkanApp {
             .build();
 
         unsafe { device.create_shader_module(&create_info, None).unwrap() }
+    }
+
+    fn create_render_pass(format: Format) {
+        //subpass同士でやり取りするデータをAttachmentと呼ぶ
+        let color_attachment = vk::AttachmentDescription::builder()
+            //swapchainのフォーマットと同じものを使用
+            .format(format)
+            //マルチサンプリングの設定
+            .samples(vk::SampleCountFlags::TYPE_1)
+            //loadOpとstoreOpはレンダリング前と後のデータをどうするか決める
+            //load
+            //CLEARは開始時に定数で値をクリアする
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            //レンダリングされたコンテンツをメモリ上に保存する
+            .store_op(vk::AttachmentStoreOp::STORE)
+            //上記２つのStencil版
+            //現在は使用していないので特に考慮する必要がないというDONT_CAREを割り当てる
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            //画像の特定のピクセルフォーマットはVkImageで保持されるがそのピクセルごとのメモリレイアウトの設定はここで行われる
+            //レイアウトはそれぞれその画像が何をするための物なのかを示すもの
+            //initialLayoutはレンダリングパスが始まる前に画像が持つレイアウトを指定する
+            //UNDEFINEDは画像のレイアウト
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            //PRESENT_SRC_KHRはスワップチェーンで提示される画像となる
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+            .build();
+
+        //Subpass用の設定構造体
+        let color_attachment_ref = vk::AttachmentReference::builder()
+            //Subpassは複数のAttachmentを持つことがあるためこうなっている
+            //参照するVkAttachmentDescriptionのインデックスを指定する
+            .attachment(0)
+            //attachmentのレイアウトを指定
+            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .build();
+
+        let subpass = vk::SubpassDescription::builder()
+            //Vulkanは将来的にCompute系のsubpassもサポートする可能性が存在するためGRAPHICSを指定してあげる
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            //ここでindexを0番に設定したためフラグメントシェーダーから`layout(location = 0) out vec4 outColor`で参照できる
+            .color_attachments(&[color_attachment_ref])
+            .build();
     }
 }
 
