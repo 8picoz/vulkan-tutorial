@@ -51,6 +51,7 @@ pub struct VulkanApp {
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
+    swap_chain_frame_buffers: Vec<vk::Framebuffer>,
 }
 
 impl VulkanApp {
@@ -99,6 +100,14 @@ impl VulkanApp {
         let (pipeline, pipeline_layout) =
             Self::create_graphics_pipeline(&device, swap_chain_extent, render_pass);
 
+        let swap_chain_frame_buffers = Self::create_frame_buffers(
+            &device,
+            render_pass,
+            //Cloneして大丈夫？
+            swap_chain_image_views.clone(),
+            swap_chain_extent,
+        );
+
         Ok(Self {
             entry,
             instance,
@@ -118,6 +127,7 @@ impl VulkanApp {
             render_pass,
             pipeline_layout,
             pipeline,
+            swap_chain_frame_buffers,
         })
     }
 
@@ -768,12 +778,44 @@ impl VulkanApp {
 
         unsafe { device.create_render_pass(&render_pass_info, None).unwrap() }
     }
+
+    fn create_frame_buffers(
+        device: &Device,
+        render_pass: vk::RenderPass,
+        swap_chain_image_views: Vec<vk::ImageView>,
+        swap_chain_extent: vk::Extent2D,
+    ) -> Vec<vk::Framebuffer> {
+        let mut swap_chain_frame_buffer = vec![];
+
+        for image_view in swap_chain_image_views {
+            let frame_buffer_info = vk::FramebufferCreateInfo::builder()
+                //FrameBufferがどのRender passと互換性を持つかを指定
+                //FrameBufferは互換性のあるレンダーパスでのみ使用できる
+                .render_pass(render_pass)
+                //RenderPassのpAttachment配列内のそれぞれのAttachmentに対してどのImageViewが紐づくべきかを指定
+                .attachments(&[image_view])
+                .width(swap_chain_extent.width)
+                .height(swap_chain_extent.height)
+                //画像配列のレイヤー数を指定
+                .layers(1)
+                .build();
+
+            swap_chain_frame_buffer
+                .push(unsafe { device.create_framebuffer(&frame_buffer_info, None).unwrap() });
+        }
+
+        swap_chain_frame_buffer
+    }
 }
 
 impl Drop for VulkanApp {
     fn drop(&mut self) {
         log::debug!("Dropping application.");
         unsafe {
+            for frame_buffer in self.swap_chain_frame_buffers {
+                self.device.destroy_framebuffer(frame_buffer, None);
+            }
+
             for image_view in self.swap_chain_image_views.clone() {
                 self.device.destroy_image_view(image_view, None);
             }
