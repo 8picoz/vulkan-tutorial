@@ -705,6 +705,7 @@ impl VulkanApp {
             .code(spirv_code)
             .build();
 
+        //なんか正しく動いてない気がするんだよなあ
         unsafe { device.create_shader_module(&create_info, None).unwrap() }
     }
 
