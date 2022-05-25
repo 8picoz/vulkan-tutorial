@@ -48,7 +48,9 @@ pub struct VulkanApp {
     swap_chain_image_format: vk::Format,
     swap_chain_extent: vk::Extent2D,
     swap_chain_image_views: Vec<vk::ImageView>,
+    render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
 }
 
 impl VulkanApp {
@@ -92,9 +94,10 @@ impl VulkanApp {
         let swap_chain_image_views =
             Self::create_image_views(&device, &swap_chain_images, swap_chain_image_format);
 
-        Self::create_render_pass(swap_chain_image_format);
+        let render_pass = Self::create_render_pass(&device, swap_chain_image_format);
 
-        let pipeline_layout = Self::create_graphics_pipeline(&device, swap_chain_extent);
+        let (pipeline, pipeline_layout) =
+            Self::create_graphics_pipeline(&device, swap_chain_extent, render_pass);
 
         Ok(Self {
             entry,
@@ -112,7 +115,9 @@ impl VulkanApp {
             swap_chain_image_format,
             swap_chain_extent,
             swap_chain_image_views,
+            render_pass,
             pipeline_layout,
+            pipeline,
         })
     }
 
@@ -449,7 +454,8 @@ impl VulkanApp {
     fn create_graphics_pipeline(
         device: &Device,
         swap_chain_extent: vk::Extent2D,
-    ) -> vk::PipelineLayout {
+        render_pass: vk::RenderPass,
+    ) -> (vk::Pipeline, vk::PipelineLayout) {
         //プログラマブルステージの設定
 
         //Create Shader Module
@@ -530,6 +536,7 @@ impl VulkanApp {
             .build();
 
         //viewportとscissor rectangleを統合
+        //あとあと使う？
         let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
             //GPUによっては複数のviewportとscissor rectangleを使用することができる
             .viewports(&[viewport])
@@ -646,15 +653,50 @@ impl VulkanApp {
                 .unwrap()
         };
 
+        //Pipeline
+
+        let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
+            .stages(&shader_stages)
+            .vertex_input_state(&vertex_input_info)
+            .input_assembly_state(&input_assembly_info)
+            .rasterization_state(&rasterizer)
+            .multisample_state(&multisampling)
+            //.depth_stencil_state()
+            .color_blend_state(&color_blend)
+            //.dynamic_state()
+            .layout(pipeline_layout)
+            .render_pass(render_pass)
+            .subpass(0)
+            //パイプラインの派生をする時に使用する
+            //パイプラインの派生とは既存のパイプラインと多くの機能が共通している場合に設定にコストをかけずに素早く切り替えることができる機能
+            //Handleで既存のパイプラインを指定するか
+            .base_pipeline_handle(vk::Pipeline::null())
+            //パイプラインのIndexで指定するかのどちらか
+            .base_pipeline_index(-1)
+            .build();
+
+        let pipeline = unsafe {
+            device
+                //第一引数のPipelineCacheはcreate_graphics_pipelinesを複数回呼び出しするときやキャッシュがファイルに保存されている時にパイプラインに関するデータを再利用することができる
+                //第二引数は一気にpipelineを作成できるようにするために引数は配列を受け取れるようになっている
+                .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+                .unwrap()
+                //ここのpopは帰ってくる配列の要素が１つであることがわかっているため
+                .pop()
+                .unwrap()
+        };
+
         unsafe {
             //パイプラインの作成が終了したらモジュールはすぐに破棄して良い
             device.destroy_shader_module(shader_module, None);
         }
 
-        pipeline_layout
+        (pipeline, pipeline_layout)
     }
 
     fn create_shader_module(device: &Device, spirv_code: &[u8]) -> vk::ShaderModule {
+        info!("create shader module");
+
         //[u8]から[u32]に変換
         //アライメントはSPIR-Vのコンパイラが保証しているものとする
         let spirv_code = unsafe { std::mem::transmute::<&[u8], &[u32]>(spirv_code) };
@@ -666,7 +708,11 @@ impl VulkanApp {
         unsafe { device.create_shader_module(&create_info, None).unwrap() }
     }
 
-    fn create_render_pass(format: Format) {
+    fn create_render_pass(device: &Device, format: Format) -> vk::RenderPass {
+        info!("create render pass");
+
+        //Subpass周り諸々
+
         //subpass同士でやり取りするデータをAttachmentと呼ぶ
         let color_attachment = vk::AttachmentDescription::builder()
             //swapchainのフォーマットと同じものを使用
@@ -707,6 +753,15 @@ impl VulkanApp {
             //ここでindexを0番に設定したためフラグメントシェーダーから`layout(location = 0) out vec4 outColor`で参照できる
             .color_attachments(&[color_attachment_ref])
             .build();
+
+        //RenderPass
+
+        let render_pass_info = vk::RenderPassCreateInfo::builder()
+            .attachments(&[color_attachment])
+            .subpasses(&[subpass])
+            .build();
+
+        unsafe { device.create_render_pass(&render_pass_info, None).unwrap() }
     }
 }
 
@@ -723,6 +778,11 @@ impl Drop for VulkanApp {
             self.surface.destroy_surface(self.surface_khr, None);
 
             self.swap_chain.destroy_swapchain(self.swap_chain_khr, None);
+
+            self.device.destroy_render_pass(self.render_pass, None);
+
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
 
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
