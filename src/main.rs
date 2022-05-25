@@ -14,7 +14,7 @@ mod window_handlers;
 
 fn main() {
     env::set_var("RUST_LOG", "info");
-    //env::set_var("RUST_LOG", "DEBUG");
+    env::set_var("RUST_LOG", "DEBUG");
     env_logger::init();
 
     let window_handlers = WindowHandlers::new();

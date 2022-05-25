@@ -697,15 +697,14 @@ impl VulkanApp {
     fn create_shader_module(device: &Device, spirv_code: &[u8]) -> vk::ShaderModule {
         info!("create shader module");
 
-        //[u8]から[u32]に変換
-        //アライメントはSPIR-Vのコンパイラが保証しているものとする
-        let spirv_code = unsafe { std::mem::transmute::<&[u8], &[u32]>(spirv_code) };
+        let create_info = vk::ShaderModuleCreateInfo {
+            s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
+            p_next: std::ptr::null(),
+            flags: vk::ShaderModuleCreateFlags::empty(),
+            code_size: spirv_code.len(),
+            p_code: spirv_code.as_ptr() as *const u32,
+        };
 
-        let create_info = vk::ShaderModuleCreateInfo::builder()
-            .code(spirv_code)
-            .build();
-
-        //なんか正しく動いてない気がするんだよなあ
         unsafe { device.create_shader_module(&create_info, None).unwrap() }
     }
 
