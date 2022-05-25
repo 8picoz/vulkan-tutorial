@@ -469,11 +469,15 @@ impl VulkanApp {
 
         let shader_module = Self::create_shader_module(device, SHADER_CODE);
 
+        //Lifetimeを確保するために一度変数にしている
+        let main_vs = CString::new("main_vs").unwrap();
+        let main_fs = CString::new("main_fs").unwrap();
+
         let vert_shader_stage_info = vk::PipelineShaderStageCreateInfo::builder()
             //fragmentやvertexまたgeometryなどのどこのシェーダーステージの物なのかを指定する
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(shader_module)
-            .name(CString::new("main_vs").unwrap().as_c_str())
+            .name(main_vs.as_c_str())
             //これはシェーダ内で定数を設定する時に外部から設定できるのでそのときに使用するもの
             //.specialization_info()
             .build();
@@ -481,7 +485,7 @@ impl VulkanApp {
         let frag_shader_stage_info = vk::PipelineShaderStageCreateInfo::builder()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(shader_module)
-            .name(CString::new("main_fs").unwrap().as_c_str())
+            .name(main_fs.as_c_str())
             .build();
 
         let shader_stages = [vert_shader_stage_info, frag_shader_stage_info];
@@ -659,6 +663,7 @@ impl VulkanApp {
             .stages(&shader_stages)
             .vertex_input_state(&vertex_input_info)
             .input_assembly_state(&input_assembly_info)
+            .viewport_state(&viewport_state)
             .rasterization_state(&rasterizer)
             .multisample_state(&multisampling)
             //.depth_stencil_state()
