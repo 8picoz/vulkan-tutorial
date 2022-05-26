@@ -5,8 +5,8 @@ use crate::required_names::get_required_device_extensions;
 use crate::swap_chain_utils::SwapChainSupportDetails;
 use ash::extensions::khr::{Surface, Swapchain};
 use ash::vk::{
-    DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, Format, PhysicalDevice, Queue,
-    SharingMode, SurfaceKHR, SwapchainKHR,
+    CommandPool, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, Format, PhysicalDevice,
+    Pipeline, Queue, SharingMode, SurfaceKHR, SwapchainKHR,
 };
 use ash::{extensions::ext::DebugUtils, vk, Device, Entry, Instance};
 use log::{debug, info};
@@ -52,6 +52,8 @@ pub struct VulkanApp {
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     swap_chain_frame_buffers: Vec<vk::Framebuffer>,
+    command_pool: vk::CommandPool,
+    command_buffers: Vec<vk::CommandBuffer>,
 }
 
 impl VulkanApp {
@@ -108,6 +110,11 @@ impl VulkanApp {
             swap_chain_extent,
         );
 
+        let command_pool =
+            Self::create_command_pool(&instance, &surface, surface_khr, physical_device, &device);
+
+        let command_buffers = Self::create_command_buffer(&device, command_pool);
+
         Ok(Self {
             entry,
             instance,
@@ -128,6 +135,8 @@ impl VulkanApp {
             pipeline_layout,
             pipeline,
             swap_chain_frame_buffers,
+            command_pool,
+            command_buffers,
         })
     }
 
@@ -806,13 +815,147 @@ impl VulkanApp {
 
         swap_chain_frame_buffer
     }
+
+    fn create_command_pool(
+        instance: &Instance,
+        surface: &Surface,
+        surface_khr: SurfaceKHR,
+        physical_device: PhysicalDevice,
+        device: &Device,
+    ) -> vk::CommandPool {
+        let queue_family_indices = QueueFamilyIndices::find_queue_families(
+            instance,
+            surface,
+            surface_khr,
+            physical_device,
+        );
+
+        //Command Bufferのメモリ管理をするためのCommand Pool
+        let pool_info = vk::CommandPoolCreateInfo::builder()
+            //flagは二種類存在し、
+            //VK_COMMAND_POOL_CREATE_TRANSIENT_BITはプールが割り当てたコマンドバッファが短命であることを指定
+            //VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BITはそのコマンドバッファをコマンドを積む際にResetして使い回すことを指定
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            //Command Poolは単一のキューファミリータイプに対して作られる
+            //今回はグラフィックスキューファミリーを選択
+            .queue_family_index(queue_family_indices.graphics_family.unwrap())
+            .build();
+
+        unsafe { device.create_command_pool(&pool_info, None).unwrap() }
+    }
+
+    //Command Bufferは所属するCommand Poolが破棄されるタイミングで自動的に破棄される
+    fn create_command_buffer(device: &Device, command_pool: CommandPool) -> Vec<vk::CommandBuffer> {
+        let alloc_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(command_pool)
+            //コマンドバッファがプライマリなのかセカンダリなのを指定
+            //PRIMARY: 直接キューに対してサブミットすることができる
+            //SECONDARY: 直接キューに対してサブミットすることは出来ないがプライマリコマンドバッファから間接的に呼び出すことができる
+            //SECONDARYは共通の操作をまとめて再利用したりする時に便利
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1)
+            .build();
+
+        unsafe { device.allocate_command_buffers(&alloc_info).unwrap() }
+    }
+
+    fn record_command_buffer(
+        device: &Device,
+        command_buffer: vk::CommandBuffer,
+        swap_chain_frame_buffer: vk::Framebuffer,
+        render_pass: vk::RenderPass,
+        swap_chain_extent: vk::Extent2D,
+        graphics_pipeline: vk::Pipeline,
+    ) {
+        let begin_info = vk::CommandBufferBeginInfo::builder()
+            //コマンドバッファの使用方法を指定
+            //ONE_TIME_SUBMIT: コマンドバッファを一度ジック押したらまたすぐに再記録する
+            //PASS_CONTINUE: 一回のレンダリングパスの中で完結するSECONDARYコマンドバッファ
+            //SIMULTANEOUS_USE: コマンドバッファを実行または保留中に再度Submitすることができる
+            .flags(vk::CommandBufferUsageFlags::empty())
+            //この値はSECONDARYコマンドバッファに対してのみ適用される
+            //これはPRIMARYなコマンドバッファからどのように状態を継承するかを指定する
+            //.inheritance_info()
+            .build();
+
+        unsafe {
+            device
+                //コマンドバッファの記録を開始する
+                //一度記録されたコマンドバッファに対してもう一度このメソッドを呼び出すと、リセットが暗黙的に走る
+                .begin_command_buffer(command_buffer, &begin_info)
+                .unwrap()
+        };
+
+        let clear_color = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        };
+
+        let render_pass_info = vk::RenderPassBeginInfo::builder()
+            //レンダーパスとカラーアタッチメントとして登録されたframebufferを紐づけ
+            .render_pass(render_pass)
+            .framebuffer(swap_chain_frame_buffer)
+            .render_area(
+                //レンダリング領域の大きさを指定
+                //レンダリング領域とはシェーダのロードとストアが行われる場所
+                //この領域外のピクセルの値は未定義となる
+                vk::Rect2D::builder()
+                    .offset(vk::Offset2D::builder().x(0).y(0).build())
+                    .extent(swap_chain_extent)
+                    .build(),
+            )
+            //color_attachmentの定義時に指定したLOAD_OP_CLEARに使用するクリア値の設定
+            .clear_values(&[clear_color])
+            .build();
+
+        //コマンドを積む
+        unsafe {
+            //コマンドを記録するすべての関数はprefixとしてcmd(本家だとvkCmd)がつく
+            //基本的にこれらの関数の実行時にはコマンドを記録しているだけで実際に実行しているわけではないので、返り値がResultになっていない
+            //個のコマンドを使用することで描画が始まる
+            device.cmd_begin_render_pass(
+                command_buffer,
+                &render_pass_info,
+                //render_pass内の描画コマンドをどのように提供するかを指定
+                //INLINE: render_pass内のコマンドはPRIMARYなコマンドバッファ自体に埋め込まれSECODARYは実行されない
+                //SECONDARY_COMMAND_BUFFER: render_pass内のコマンドはSECONDARYなコマンドバッファから実行される
+                vk::SubpassContents::INLINE,
+            );
+
+            //Graphics Pipelineをコマンドバッファに対して紐づける
+            device.cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                graphics_pipeline,
+            );
+
+            //三角形を描画する処理を発行
+            device.cmd_draw(
+                command_buffer,
+                //頂点バッファのサイズ設定
+                3,
+                //インスタンス数
+                1,
+                //頂点バッファのオフセット
+                0,
+                //インスタンスのオフセットでgl_InstanceIndexの最小値となる
+                0,
+            );
+
+            //render_pass系コマンドの終わり
+            device.cmd_end_render_pass(command_buffer);
+        };
+
+        unsafe { device.end_command_buffer(command_buffer).unwrap() };
+    }
 }
 
 impl Drop for VulkanApp {
     fn drop(&mut self) {
         log::debug!("Dropping application.");
         unsafe {
-            for frame_buffer in self.swap_chain_frame_buffers {
+            for frame_buffer in self.swap_chain_frame_buffers.clone() {
                 self.device.destroy_framebuffer(frame_buffer, None);
             }
 
@@ -831,8 +974,7 @@ impl Drop for VulkanApp {
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
 
-            self.device
-                .destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device.destroy_command_pool(self.command_pool, None);
 
             if let Some(debug_utils) = &self.debug_utils {
                 debug_utils.destroy_debug_utils_messenger(
