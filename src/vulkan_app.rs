@@ -1,4 +1,5 @@
 use crate::{debug, khr_util};
+use core::num::flt2dec::estimator::estimate_scaling_factor;
 
 use crate::queue_family::QueueFamilyIndices;
 use crate::required_names::get_required_device_extensions;
@@ -54,6 +55,12 @@ pub struct VulkanApp {
     swap_chain_frame_buffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
+    //swapchainからimageを取得してレンダリングの準備ができたことを知らせるSemaphore
+    image_available_semaphore: vk::Semaphore,
+    //レンダリングが終了してPresentationの準備ができたことを知らせるSemaphore
+    render_finished_semaphore: vk::Semaphore,
+    //一度に1フレームしかレンダリングしないようにCPU側で止めるためのFence
+    in_flight_fence: vk::Fence,
 }
 
 impl VulkanApp {
@@ -115,6 +122,9 @@ impl VulkanApp {
 
         let command_buffers = Self::create_command_buffer(&device, command_pool);
 
+        let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
+            Self::create_sync_objects(&device);
+
         Ok(Self {
             entry,
             instance,
@@ -137,6 +147,9 @@ impl VulkanApp {
             swap_chain_frame_buffers,
             command_pool,
             command_buffers,
+            image_available_semaphore,
+            render_finished_semaphore,
+            in_flight_fence,
         })
     }
 
@@ -144,6 +157,8 @@ impl VulkanApp {
         info!("Running application");
 
         event_loop.run(move |event, _, control_flow| {
+            self.draw_frame();
+
             *control_flow = ControlFlow::Poll;
 
             match event {
@@ -166,6 +181,8 @@ impl VulkanApp {
             }
         });
     }
+
+    fn draw_frame(&self) {}
 
     fn create_instance(entry: &Entry) -> Result<Instance, Box<dyn Error>> {
         let app_info = vk::ApplicationInfo::builder()
@@ -949,6 +966,27 @@ impl VulkanApp {
 
         unsafe { device.end_command_buffer(command_buffer).unwrap() };
     }
+
+    fn create_sync_objects(device: &Device) -> (vk::Semaphore, vk::Semaphore, vk::Fence) {
+        //SemaphoreCreateInfoは今のところsTypeは必須ではなく今後のバージョンによりflagsやpNextが追加される可能性がある
+        let semaphore_info = vk::SemaphoreCreateInfo::builder().build();
+
+        //こちらもSemaphoreCreateInfo同様
+        let fence_info = vk::FenceCreateInfo::builder().build();
+
+        let image_available_semaphore =
+            unsafe { device.create_semaphore(&semaphore_info, None).unwrap() };
+        let render_finished_semaphore =
+            unsafe { device.create_semaphore(&semaphore_info, None).unwrap() };
+
+        let in_flight_fence = unsafe { device.create_fence(&fence_info, None).unwrap() };
+
+        (
+            image_available_semaphore,
+            render_finished_semaphore,
+            in_flight_fence,
+        )
+    }
 }
 
 impl Drop for VulkanApp {
@@ -975,6 +1013,13 @@ impl Drop for VulkanApp {
                 .destroy_pipeline_layout(self.pipeline_layout, None);
 
             self.device.destroy_command_pool(self.command_pool, None);
+
+            self.device
+                .destroy_semaphore(self.image_available_semaphore, None);
+            self.device
+                .destroy_semaphore(self.render_finished_semaphore, None);
+
+            self.device.destroy_fence(self.in_flight_fence, None);
 
             if let Some(debug_utils) = &self.debug_utils {
                 debug_utils.destroy_debug_utils_messenger(

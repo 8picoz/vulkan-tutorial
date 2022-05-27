@@ -1,3 +1,5 @@
+extern crate core;
+
 use crate::window_handlers::WindowHandlers;
 
 use ash::vk::RefreshCycleDurationGOOGLEBuilder;
