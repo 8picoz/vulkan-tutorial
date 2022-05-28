@@ -192,29 +192,46 @@ impl VulkanApp {
 
             //コマンドバッファを記録する
             self.record_command_buffer();
-        }
 
-        //キューをGPUにSubmitする
-        let submit_info = vk::SubmitInfo::builder()
-            //どのセマフォを使用して待機するか
-            .wait_semaphores(&[self.image_available_semaphore])
-            //どのステージで待機するかを指定
-            //今回は画像が利用可能になるまで待ちたいのでCOLOR_ATTACHMENT_OUTPUTを使用
-            //この配列はインデックスで上記のsemaphoreの配列と対応する
-            //ここのセマフォを設定せずに行うと理論的には画像が利用可能でない状態でバーテックスシェーダを使用することなどが可能
-            .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
-            //実行するコマンドバッファを指定
-            .command_buffers(&[command_buffer])
-            //ここで指定したセマフォに対してこのsubmitが終了した時にシグナルを送る
-            .signal_semaphores(&[self.render_finished_semaphore])
-            .build();
+            //キューをGPUにSubmitする
+            let submit_info = vk::SubmitInfo::builder()
+                //どのセマフォを使用して待機するか
+                .wait_semaphores(&[self.image_available_semaphore])
+                //どのステージで待機するかを指定
+                //今回は画像が利用可能になるまで待ちたいのでCOLOR_ATTACHMENT_OUTPUTを使用
+                //この配列はインデックスで上記のsemaphoreの配列と対応する
+                //ここのセマフォを設定せずに行うと理論的には画像が利用可能でない状態でバーテックスシェーダを使用することなどが可能
+                .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
+                //実行するコマンドバッファを指定
+                .command_buffers(&[command_buffer])
+                //ここで指定したセマフォに対してこのsubmitが終了した時にシグナルを送る
+                .signal_semaphores(&[self.render_finished_semaphore])
+                .build();
 
-        unsafe {
             //graphics_queueをsubmitする
             //in_flight_fenceに対してシグナルを送るように
             self.device
                 //queueへのsubmitは非常に処理として重たいので複数のsubmit_infoを一回で渡せるようになっている
                 .queue_submit(self.graphics_queue, &[submit_info], in_flight_fence)
+                .unwrap();
+
+            //Presentation
+
+            let present_info = vk::PresentInfoKHR::builder()
+                //待機するセマフォを指定
+                .wait_semaphores(&[self.render_finished_semaphore])
+                .swapchains(&[self.swap_chain_khr])
+                //swapchainに対するimageを指定
+                .image_indices(&[image_index])
+                //このメソッドはPresentationが成功したかどうかを受け取れる
+                //引数が配列になっているのは各swapchainに対してそれぞれResultが返ってくるため
+                //今回はswapchainが１つしか存在しないのでpresent用の関数の戻り値を参照すれば良い
+                //swapchainが複数存在するとき用？
+                //.results()
+                .build();
+
+            self.swap_chain
+                .queue_present(self.present_queue, &present_info)
                 .unwrap();
         }
     }
@@ -223,13 +240,14 @@ impl VulkanApp {
         info!("Running application");
 
         event_loop.run(move |event, _, control_flow| {
-            self.draw_frame();
-
             *control_flow = ControlFlow::Poll;
 
             match event {
                 Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                    WindowEvent::CloseRequested => {
+                        *control_flow = ControlFlow::Exit;
+                        unsafe { self.device.device_wait_idle().unwrap() };
+                    }
                     WindowEvent::KeyboardInput {
                         input:
                             KeyboardInput {
@@ -245,6 +263,8 @@ impl VulkanApp {
                 },
                 _ => (),
             }
+
+            self.draw_frame();
         });
     }
 
@@ -859,11 +879,32 @@ impl VulkanApp {
             .color_attachments(&[color_attachment_ref])
             .build();
 
+        //Render passのSubpass Dependencyはdraw_frameのImageが利用可能にならないと(セマフォでいうとimage_available_semaphore)設定できないので待機する
+        //今回の方法はRender passを途中でVK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BITまで待機させることで可能にしているが
+        //imageAvailableSemaphoreのwaitStagesをVK_PIPELINE_STAGE_TOP_OF_PIPE_BITに変更してRender pass自体を開始しないようにすることもできる
+
+        //srcとdstの２つのsubpassを指定して紐づける
+        let dependency = vk::SubpassDependency::builder()
+            //subpassの依存関係を記述
+            //SUBPAS_EXTERNALはdst_subpassがどう指定されているかに応じてレンダーパスの前後の暗黙のsubpassを参照する
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            //subpassのindexを指定
+            .dst_subpass(0)
+            //次の２つは待機する操作とその操作が発生するステージを指定
+            //ステージ指定
+            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            //待機操作
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .build();
+
         //RenderPass
 
         let render_pass_info = vk::RenderPassCreateInfo::builder()
             .attachments(&[color_attachment])
             .subpasses(&[subpass])
+            .dependencies(&[dependency])
             .build();
 
         unsafe { device.create_render_pass(&render_pass_info, None).unwrap() }
