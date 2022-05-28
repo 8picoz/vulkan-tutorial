@@ -1,9 +1,7 @@
-use crate::{debug, khr_util};
-use core::num::flt2dec::estimator::estimate_scaling_factor;
-
 use crate::queue_family::QueueFamilyIndices;
 use crate::required_names::get_required_device_extensions;
 use crate::swap_chain_utils::SwapChainSupportDetails;
+use crate::{debug, khr_util};
 use ash::extensions::khr::{Surface, Swapchain};
 use ash::vk::{
     CommandPool, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, Format, PhysicalDevice,
@@ -60,7 +58,7 @@ pub struct VulkanApp {
     //レンダリングが終了してPresentationの準備ができたことを知らせるSemaphore
     render_finished_semaphore: vk::Semaphore,
     //一度に1フレームしかレンダリングしないようにCPU側で止めるためのFence
-    in_flight_fence: vk::Fence,
+    in_flight_fence: Vec<vk::Fence>,
 }
 
 impl VulkanApp {
@@ -99,7 +97,7 @@ impl VulkanApp {
             Self::create_swap_chain(&instance, &device, physical_device, &surface, surface_khr);
 
         //imageのLifetimeはswapchainに紐づいているので明示的にDestoryする必要はない
-        let swap_chain_images = Self::get_swap_chain_image(&swap_chain, swap_chain_khr);
+        let swap_chain_images = Self::get_swap_chain_images(&swap_chain, swap_chain_khr);
 
         let swap_chain_image_views =
             Self::create_image_views(&device, &swap_chain_images, swap_chain_image_format);
@@ -124,6 +122,8 @@ impl VulkanApp {
 
         let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
             Self::create_sync_objects(&device);
+
+        let in_flight_fence = vec![in_flight_fence];
 
         Ok(Self {
             entry,
@@ -153,7 +153,48 @@ impl VulkanApp {
         })
     }
 
-    pub fn run(&mut self, event_loop: EventLoop<()>) {
+    fn draw_frame(&self) {
+        unsafe {
+            //Fenceの待機
+            //第二引数は配列で受け取った全てのFenceを待つかどうか
+            self.device
+                .wait_for_fences(&self.in_flight_fence, true, u64::MAX)
+                .unwrap();
+
+            self.device.reset_fences(&self.in_flight_fence).unwrap();
+
+            //swapchainからImageを取得する
+            //swap_chain_imagesの配列のIndexが帰ってくる
+            let image_index = self
+                .swap_chain
+                .acquire_next_image(
+                    self.swap_chain_khr,
+                    //画像が利用可能になるまでの待機時間のタイムアウトをナノ秒で指定
+                    //MAXを入れるとタイムアウトを無効にできる
+                    u64::MAX,
+                    //このセマフォはシグナルが送られる
+                    self.image_available_semaphore,
+                    vk::Fence::null(),
+                )
+                .unwrap()
+                //.1はVK_SUBOPTIMAL_KHRかどうかが帰ってくる
+                //https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkResult.html
+                .0;
+
+            //配列の一番目を使用する
+            let command_buffer = self.command_buffers.first().unwrap().clone();
+
+            //コマンドバッファをリセットする
+            self.device
+                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
+                .unwrap();
+
+            //コマンドバッファを記録する
+            self.record_command_buffer();
+        }
+    }
+
+    pub fn run(self, event_loop: EventLoop<()>) {
         info!("Running application");
 
         event_loop.run(move |event, _, control_flow| {
@@ -181,8 +222,6 @@ impl VulkanApp {
             }
         });
     }
-
-    fn draw_frame(&self) {}
 
     fn create_instance(entry: &Entry) -> Result<Instance, Box<dyn Error>> {
         let app_info = vk::ApplicationInfo::builder()
@@ -430,7 +469,7 @@ impl VulkanApp {
         (swap_chain, swap_chain_khr, surface_format.format, extent)
     }
 
-    fn get_swap_chain_image(
+    fn get_swap_chain_images(
         swap_chain: &Swapchain,
         swap_chain_khr: SwapchainKHR,
     ) -> Vec<vk::Image> {
@@ -813,6 +852,7 @@ impl VulkanApp {
     ) -> Vec<vk::Framebuffer> {
         let mut swap_chain_frame_buffer = vec![];
 
+        //vkImagesに割り当てていく
         for image_view in swap_chain_image_views {
             let frame_buffer_info = vk::FramebufferCreateInfo::builder()
                 //FrameBufferがどのRender passと互換性を持つかを指定
@@ -876,14 +916,12 @@ impl VulkanApp {
         unsafe { device.allocate_command_buffers(&alloc_info).unwrap() }
     }
 
-    fn record_command_buffer(
-        device: &Device,
-        command_buffer: vk::CommandBuffer,
-        swap_chain_frame_buffer: vk::Framebuffer,
-        render_pass: vk::RenderPass,
-        swap_chain_extent: vk::Extent2D,
-        graphics_pipeline: vk::Pipeline,
-    ) {
+    fn record_command_buffer(&self) {
+        //コマンドバッファもフレームバッファもインデックスは同じものを紐づけてあげる
+        //今回は１つだけ使うためfirst()
+        let command_buffer = self.command_buffers.first().unwrap().clone();
+        let swap_chain_frame_buffer = self.swap_chain_frame_buffers.first().unwrap().clone();
+
         let begin_info = vk::CommandBufferBeginInfo::builder()
             //コマンドバッファの使用方法を指定
             //ONE_TIME_SUBMIT: コマンドバッファを一度ジック押したらまたすぐに再記録する
@@ -896,7 +934,7 @@ impl VulkanApp {
             .build();
 
         unsafe {
-            device
+            self.device
                 //コマンドバッファの記録を開始する
                 //一度記録されたコマンドバッファに対してもう一度このメソッドを呼び出すと、リセットが暗黙的に走る
                 .begin_command_buffer(command_buffer, &begin_info)
@@ -911,7 +949,7 @@ impl VulkanApp {
 
         let render_pass_info = vk::RenderPassBeginInfo::builder()
             //レンダーパスとカラーアタッチメントとして登録されたframebufferを紐づけ
-            .render_pass(render_pass)
+            .render_pass(self.render_pass)
             .framebuffer(swap_chain_frame_buffer)
             .render_area(
                 //レンダリング領域の大きさを指定
@@ -919,7 +957,7 @@ impl VulkanApp {
                 //この領域外のピクセルの値は未定義となる
                 vk::Rect2D::builder()
                     .offset(vk::Offset2D::builder().x(0).y(0).build())
-                    .extent(swap_chain_extent)
+                    .extent(self.swap_chain_extent)
                     .build(),
             )
             //color_attachmentの定義時に指定したLOAD_OP_CLEARに使用するクリア値の設定
@@ -931,7 +969,7 @@ impl VulkanApp {
             //コマンドを記録するすべての関数はprefixとしてcmd(本家だとvkCmd)がつく
             //基本的にこれらの関数の実行時にはコマンドを記録しているだけで実際に実行しているわけではないので、返り値がResultになっていない
             //個のコマンドを使用することで描画が始まる
-            device.cmd_begin_render_pass(
+            self.device.cmd_begin_render_pass(
                 command_buffer,
                 &render_pass_info,
                 //render_pass内の描画コマンドをどのように提供するかを指定
@@ -941,14 +979,14 @@ impl VulkanApp {
             );
 
             //Graphics Pipelineをコマンドバッファに対して紐づける
-            device.cmd_bind_pipeline(
+            self.device.cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                graphics_pipeline,
+                self.pipeline,
             );
 
             //三角形を描画する処理を発行
-            device.cmd_draw(
+            self.device.cmd_draw(
                 command_buffer,
                 //頂点バッファのサイズ設定
                 3,
@@ -961,10 +999,10 @@ impl VulkanApp {
             );
 
             //render_pass系コマンドの終わり
-            device.cmd_end_render_pass(command_buffer);
+            self.device.cmd_end_render_pass(command_buffer);
         };
 
-        unsafe { device.end_command_buffer(command_buffer).unwrap() };
+        unsafe { self.device.end_command_buffer(command_buffer).unwrap() };
     }
 
     fn create_sync_objects(device: &Device) -> (vk::Semaphore, vk::Semaphore, vk::Fence) {
@@ -972,7 +1010,11 @@ impl VulkanApp {
         let semaphore_info = vk::SemaphoreCreateInfo::builder().build();
 
         //こちらもSemaphoreCreateInfo同様
-        let fence_info = vk::FenceCreateInfo::builder().build();
+        let fence_info = vk::FenceCreateInfo::builder()
+            //最初の位置フレーム目はFenceの待機がレンダリング前に入るのでシグナリングを行うものがいないのに待機してしまう
+            //なので最初はシグナリングされた状態で作る
+            .flags(vk::FenceCreateFlags::SIGNALED)
+            .build();
 
         let image_available_semaphore =
             unsafe { device.create_semaphore(&semaphore_info, None).unwrap() };
@@ -1019,7 +1061,9 @@ impl Drop for VulkanApp {
             self.device
                 .destroy_semaphore(self.render_finished_semaphore, None);
 
-            self.device.destroy_fence(self.in_flight_fence, None);
+            for fence in self.in_flight_fence.clone() {
+                self.device.destroy_fence(fence, None);
+            }
 
             if let Some(debug_utils) = &self.debug_utils {
                 debug_utils.destroy_debug_utils_messenger(
