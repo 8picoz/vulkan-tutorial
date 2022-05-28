@@ -154,6 +154,10 @@ impl VulkanApp {
     }
 
     fn draw_frame(&self) {
+        //配列の一番目を使用する
+        let command_buffer = self.command_buffers.first().unwrap().clone();
+        let in_flight_fence = self.in_flight_fence.first().unwrap().clone();
+
         unsafe {
             //Fenceの待機
             //第二引数は配列で受け取った全てのFenceを待つかどうか
@@ -181,9 +185,6 @@ impl VulkanApp {
                 //https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkResult.html
                 .0;
 
-            //配列の一番目を使用する
-            let command_buffer = self.command_buffers.first().unwrap().clone();
-
             //コマンドバッファをリセットする
             self.device
                 .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
@@ -191,6 +192,30 @@ impl VulkanApp {
 
             //コマンドバッファを記録する
             self.record_command_buffer();
+        }
+
+        //キューをGPUにSubmitする
+        let submit_info = vk::SubmitInfo::builder()
+            //どのセマフォを使用して待機するか
+            .wait_semaphores(&[self.image_available_semaphore])
+            //どのステージで待機するかを指定
+            //今回は画像が利用可能になるまで待ちたいのでCOLOR_ATTACHMENT_OUTPUTを使用
+            //この配列はインデックスで上記のsemaphoreの配列と対応する
+            //ここのセマフォを設定せずに行うと理論的には画像が利用可能でない状態でバーテックスシェーダを使用することなどが可能
+            .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
+            //実行するコマンドバッファを指定
+            .command_buffers(&[command_buffer])
+            //ここで指定したセマフォに対してこのsubmitが終了した時にシグナルを送る
+            .signal_semaphores(&[self.render_finished_semaphore])
+            .build();
+
+        unsafe {
+            //graphics_queueをsubmitする
+            //in_flight_fenceに対してシグナルを送るように
+            self.device
+                //queueへのsubmitは非常に処理として重たいので複数のsubmit_infoを一回で渡せるようになっている
+                .queue_submit(self.graphics_queue, &[submit_info], in_flight_fence)
+                .unwrap();
         }
     }
 
