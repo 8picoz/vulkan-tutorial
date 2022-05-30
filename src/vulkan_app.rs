@@ -9,6 +9,7 @@ use ash::vk::{
 };
 use ash::{extensions::ext::DebugUtils, vk, Device, Entry, Instance};
 use log::{debug, info};
+use std::mem::swap;
 use std::{
     error::Error,
     ffi::{c_void, CStr, CString},
@@ -58,7 +59,7 @@ pub struct VulkanApp {
     //レンダリングが終了してPresentationの準備ができたことを知らせるSemaphore
     render_finished_semaphore: vk::Semaphore,
     //一度に1フレームしかレンダリングしないようにCPU側で止めるためのFence
-    in_flight_fence: Vec<vk::Fence>,
+    in_flight_fence: vk::Fence,
 }
 
 impl VulkanApp {
@@ -123,8 +124,6 @@ impl VulkanApp {
         let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
             Self::create_sync_objects(&device);
 
-        let in_flight_fence = vec![in_flight_fence];
-
         Ok(Self {
             entry,
             instance,
@@ -154,18 +153,17 @@ impl VulkanApp {
     }
 
     fn draw_frame(&self) {
-        //配列の一番目を使用する
-        let command_buffer = self.command_buffers.first().unwrap().clone();
-        let in_flight_fence = self.in_flight_fence.first().unwrap().clone();
+        //配列の0番目を使用
+        let command_buffer = *self.command_buffers.first().unwrap();
 
         unsafe {
             //Fenceの待機
             //第二引数は配列で受け取った全てのFenceを待つかどうか
             self.device
-                .wait_for_fences(&self.in_flight_fence, true, u64::MAX)
+                .wait_for_fences(&[self.in_flight_fence], true, u64::MAX)
                 .unwrap();
 
-            self.device.reset_fences(&self.in_flight_fence).unwrap();
+            self.device.reset_fences(&[self.in_flight_fence]).unwrap();
 
             //swapchainからImageを取得する
             //swap_chain_imagesの配列のIndexが帰ってくる
@@ -191,7 +189,7 @@ impl VulkanApp {
                 .unwrap();
 
             //コマンドバッファを記録する
-            self.record_command_buffer();
+            self.record_command_buffer(image_index as usize);
 
             //キューをGPUにSubmitする
             let submit_info = vk::SubmitInfo::builder()
@@ -212,7 +210,7 @@ impl VulkanApp {
             //in_flight_fenceに対してシグナルを送るように
             self.device
                 //queueへのsubmitは非常に処理として重たいので複数のsubmit_infoを一回で渡せるようになっている
-                .queue_submit(self.graphics_queue, &[submit_info], in_flight_fence)
+                .queue_submit(self.graphics_queue, &[submit_info], self.in_flight_fence)
                 .unwrap();
 
             //Presentation
@@ -245,8 +243,8 @@ impl VulkanApp {
             match event {
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => {
-                        *control_flow = ControlFlow::Exit;
                         unsafe { self.device.device_wait_idle().unwrap() };
+                        *control_flow = ControlFlow::Exit;
                     }
                     WindowEvent::KeyboardInput {
                         input:
@@ -553,7 +551,7 @@ impl VulkanApp {
                     vk::ImageSubresourceRange::builder()
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .base_mip_level(0)
-                        .level_count(0)
+                        .level_count(1)
                         .base_array_layer(0)
                         .layer_count(1)
                         .build(),
@@ -916,7 +914,7 @@ impl VulkanApp {
         swap_chain_image_views: Vec<vk::ImageView>,
         swap_chain_extent: vk::Extent2D,
     ) -> Vec<vk::Framebuffer> {
-        let mut swap_chain_frame_buffer = vec![];
+        let mut swap_chain_frame_buffers = vec![];
 
         //vkImagesに割り当てていく
         for image_view in swap_chain_image_views {
@@ -932,11 +930,11 @@ impl VulkanApp {
                 .layers(1)
                 .build();
 
-            swap_chain_frame_buffer
+            swap_chain_frame_buffers
                 .push(unsafe { device.create_framebuffer(&frame_buffer_info, None).unwrap() });
         }
 
-        swap_chain_frame_buffer
+        swap_chain_frame_buffers
     }
 
     fn create_command_pool(
@@ -982,11 +980,13 @@ impl VulkanApp {
         unsafe { device.allocate_command_buffers(&alloc_info).unwrap() }
     }
 
-    fn record_command_buffer(&self) {
+    fn record_command_buffer(&self, image_index: usize) {
         //コマンドバッファもフレームバッファもインデックスは同じものを紐づけてあげる
         //今回は１つだけ使うためfirst()
-        let command_buffer = self.command_buffers.first().unwrap().clone();
-        let swap_chain_frame_buffer = self.swap_chain_frame_buffers.first().unwrap().clone();
+        let command_buffer = *self.command_buffers.first().unwrap();
+
+        //swapchainにpresentするときにimage_indexを渡してあげているのでそれと同等のものを使用できるようにしてあげる
+        let swap_chain_frame_buffer = self.swap_chain_frame_buffers[image_index];
 
         let begin_info = vk::CommandBufferBeginInfo::builder()
             //コマンドバッファの使用方法を指定
@@ -1109,16 +1109,16 @@ impl Drop for VulkanApp {
                 self.device.destroy_image_view(image_view, None);
             }
 
-            self.device.destroy_device(None);
+            self.swap_chain.destroy_swapchain(self.swap_chain_khr, None);
 
             self.surface.destroy_surface(self.surface_khr, None);
-
-            self.swap_chain.destroy_swapchain(self.swap_chain_khr, None);
 
             self.device.destroy_render_pass(self.render_pass, None);
 
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
+
+            self.device.destroy_pipeline(self.pipeline, None);
 
             self.device.destroy_command_pool(self.command_pool, None);
 
@@ -1127,9 +1127,7 @@ impl Drop for VulkanApp {
             self.device
                 .destroy_semaphore(self.render_finished_semaphore, None);
 
-            for fence in self.in_flight_fence.clone() {
-                self.device.destroy_fence(fence, None);
-            }
+            self.device.destroy_fence(self.in_flight_fence, None);
 
             if let Some(debug_utils) = &self.debug_utils {
                 debug_utils.destroy_debug_utils_messenger(
@@ -1138,6 +1136,8 @@ impl Drop for VulkanApp {
                     None,
                 );
             }
+
+            self.device.destroy_device(None);
 
             self.instance.destroy_instance(None); //ライフタイムが聞いてても呼ばないと駄目
         }

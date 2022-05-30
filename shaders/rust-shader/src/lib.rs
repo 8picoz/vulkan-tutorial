@@ -24,9 +24,9 @@ pub fn main_vs(
 ) {
     *out_pos = *unsafe {
         [
-            vec4(0.0, -0.5, 0.0, 1.0),
-            vec4(0.5, 0.5, 0.0, 1.0),
-            vec4(-0.5, 0.5, 0.0, 1.0),
+            vec4(0.0, -1.0, 0.0, 1.0),
+            vec4(1.0, 1.0, 0.0, 1.0),
+            vec4(-1.0, 1.0, 0.0, 1.0),
         ]
         .index_unchecked(vert_id as usize)
     };
