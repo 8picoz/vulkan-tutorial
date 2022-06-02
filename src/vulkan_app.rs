@@ -40,8 +40,10 @@ pub struct VulkanApp {
     instance: Instance,
     debug_utils: Option<DebugUtils>,
     debug_utils_messenger_ext: Option<DebugUtilsMessengerEXT>,
+    //物理デバイス
+    physical_device: PhysicalDevice,
     //倫理デバイス
-    device: ash::Device,
+    device: Device,
     graphics_queue: Queue,
     present_queue: Queue,
     //SurfaceKHRはハンドラ本体でSurfaceはラッパー？
@@ -50,14 +52,14 @@ pub struct VulkanApp {
     swap_chain: Swapchain,
     swap_chain_khr: SwapchainKHR,
     swap_chain_images: Vec<vk::Image>,
-    swap_chain_image_format: vk::Format,
+    swap_chain_image_format: Format,
     swap_chain_extent: vk::Extent2D,
     swap_chain_image_views: Vec<vk::ImageView>,
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
-    pipeline: vk::Pipeline,
+    pipeline: Pipeline,
     swap_chain_frame_buffers: Vec<vk::Framebuffer>,
-    command_pool: vk::CommandPool,
+    command_pool: CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
     current_frame: usize,
 
@@ -138,6 +140,7 @@ impl VulkanApp {
             instance,
             debug_utils,
             debug_utils_messenger_ext,
+            physical_device,
             device,
             graphics_queue,
             present_queue,
@@ -285,6 +288,64 @@ impl VulkanApp {
 
             self.draw_frame(MAX_FRAMES_IN_FLIGHT as usize);
         });
+    }
+
+    pub fn recreate_swap_chain(&mut self) {
+        //swapchainが使用されている時に触るのは良くないのでdeviceがidle状態になるのを待つ
+        unsafe { self.device.device_wait_idle().unwrap() };
+
+        self.cleanup_swap_chain();
+
+        let swap_chain = Self::create_swap_chain(
+            &self.instance,
+            &self.device,
+            self.physical_device,
+            &self.surface,
+            self.surface_khr,
+        );
+
+        //image_viewはswapchainに紐づいているので再作成しなければいけない
+        let image_views = Self::create_image_views(
+            &self.device,
+            &self.swap_chain_images,
+            self.swap_chain_image_format,
+        );
+
+        //swapchain imageのformatに依存するため再作成
+        let render_pass = Self::create_render_pass(&self.device, self.swap_chain_image_format);
+
+        //viewportとscissor rectがpipelineの作成時に指定されるので再作成
+        //ただし再作成をしなくてもdynamic stateを使用すれば良い
+        let graphics_pipeline =
+            Self::create_graphics_pipeline(&self.device, self.swap_chain_extent, render_pass);
+
+        //swapchainに依存するので再作成
+        let framebuffers = Self::create_frame_buffers(
+            &self.device,
+            render_pass,
+            image_views,
+            self.swap_chain_extent,
+        );
+    }
+
+    //swapchainをcleanupする
+    fn cleanup_swap_chain(&mut self) {
+        unsafe {
+            for framebuffer in self.swap_chain_frame_buffers.clone() {
+                self.device.destroy_framebuffer(framebuffer, None);
+            }
+
+            self.device.destroy_pipeline(self.pipeline, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device.destroy_render_pass(self.render_pass, None);
+
+            for image_view in self.swap_chain_image_views.clone() {
+                self.device.destroy_image_view(image_view, None);
+            }
+
+            self.swap_chain.destroy_swapchain(self.swap_chain_khr, None);
+        }
     }
 
     fn create_instance(entry: &Entry) -> Result<Instance, Box<dyn Error>> {
@@ -1135,24 +1196,7 @@ impl Drop for VulkanApp {
     fn drop(&mut self) {
         log::debug!("Dropping application.");
         unsafe {
-            for frame_buffer in self.swap_chain_frame_buffers.clone() {
-                self.device.destroy_framebuffer(frame_buffer, None);
-            }
-
-            for image_view in self.swap_chain_image_views.clone() {
-                self.device.destroy_image_view(image_view, None);
-            }
-
-            self.swap_chain.destroy_swapchain(self.swap_chain_khr, None);
-
-            self.surface.destroy_surface(self.surface_khr, None);
-
-            self.device.destroy_render_pass(self.render_pass, None);
-
-            self.device
-                .destroy_pipeline_layout(self.pipeline_layout, None);
-
-            self.device.destroy_pipeline(self.pipeline, None);
+            self.cleanup_swap_chain();
 
             self.device.destroy_command_pool(self.command_pool, None);
 
@@ -1177,6 +1221,8 @@ impl Drop for VulkanApp {
             }
 
             self.device.destroy_device(None);
+
+            self.surface.destroy_surface(self.surface_khr, None);
 
             self.instance.destroy_instance(None); //ライフタイムが聞いてても呼ばないと駄目
         }
