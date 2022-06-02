@@ -8,8 +8,10 @@ use ash::vk::{
     Pipeline, Queue, SharingMode, SurfaceKHR, SwapchainKHR,
 };
 use ash::{extensions::ext::DebugUtils, vk, Device, Entry, Instance};
+use core::panicking::panic;
 use log::{debug, info};
 use std::mem::swap;
+use std::panic::resume_unwind;
 use std::{
     error::Error,
     ffi::{c_void, CStr, CString},
@@ -188,22 +190,31 @@ impl VulkanApp {
             self.device.reset_fences(&[in_flight_fence]).unwrap();
 
             //swapchainからImageを取得する
-            //swap_chain_imagesの配列のIndexが帰ってくる
-            let image_index = self
-                .swap_chain
-                .acquire_next_image(
-                    self.swap_chain_khr,
-                    //画像が利用可能になるまでの待機時間のタイムアウトをナノ秒で指定
-                    //MAXを入れるとタイムアウトを無効にできる
-                    u64::MAX,
-                    //このセマフォはシグナルが送られる
-                    image_available_semaphore,
-                    vk::Fence::null(),
-                )
-                .unwrap()
-                //.1はVK_SUBOPTIMAL_KHRかどうかが帰ってくる
-                //https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkResult.html
-                .0;
+            //.0はswap_chain_imagesの配列のIndexが帰ってくる
+            //.1はVK_SUBOPTIMAL_KHRかどうかが帰ってくる
+            //https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkResult.html
+            let result = self.swap_chain.acquire_next_image(
+                self.swap_chain_khr,
+                //画像が利用可能になるまでの待機時間のタイムアウトをナノ秒で指定
+                //MAXを入れるとタイムアウトを無効にできる
+                u64::MAX,
+                //このセマフォはシグナルが送られる
+                image_available_semaphore,
+                vk::Fence::null(),
+            );
+
+            let image_index = match result {
+                Ok((image_index, _)) => image_index,
+                //ERROR_OUT_OF_DATE_KHR
+                //swapchainとsurfaceの互換がなくなった時に呼ばれる、ウィンドウのリサイズ時など
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    self.recreate_swap_chain();
+                    return;
+                }
+                Err(error) => {
+                    panic!("{}", error);
+                }
+            };
 
             //コマンドバッファをリセットする
             self.device
@@ -250,9 +261,22 @@ impl VulkanApp {
                 //.results()
                 .build();
 
-            self.swap_chain
-                .queue_present(self.present_queue, &present_info)
-                .unwrap();
+            let result = self
+                .swap_chain
+                .queue_present(self.present_queue, &present_info);
+
+            match result {
+                Ok(_) => {}
+                //SUBOPTIMAL_KHR
+                //swapchainはsurfaceに正常にpresentすることは出来るが、プロパティは完全に一致していない
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
+                    self.recreate_swap_chain();
+                    return;
+                }
+                Err(error) => {
+                    panic!("{}", error);
+                }
+            }
         }
 
         self.current_frame = (self.current_frame + 1) % frame_size;
