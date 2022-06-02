@@ -29,6 +29,11 @@ const ENABLE_VALIDATION_LAYERS: bool = false;
 ///今のAshだともっと良いやり方がある、Swapchainのやり方はその一例
 pub const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
+//同時にレンダリングできるフレーム数を指定
+//2という数字を選んだのはCPUがGPUに対して選考しすぎないようにするため
+//ここらへんの設定やFenceなどが垂直同期に対して関わってくるのだと思う
+pub const MAX_FRAMES_IN_FLIGHT: u32 = 2;
+
 //メンバをOption<>地獄にしないためにはnewに関する関数をメソッドではなく関連関数にすることで回避する
 pub struct VulkanApp {
     entry: Entry,
@@ -54,12 +59,15 @@ pub struct VulkanApp {
     swap_chain_frame_buffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
+    current_frame: usize,
+
+    //これ移行がVecになっているのは複数のフレームを同時にレンダリングするときに複数必要になるため
     //swapchainからimageを取得してレンダリングの準備ができたことを知らせるSemaphore
-    image_available_semaphore: vk::Semaphore,
+    image_available_semaphores: Vec<vk::Semaphore>,
     //レンダリングが終了してPresentationの準備ができたことを知らせるSemaphore
-    render_finished_semaphore: vk::Semaphore,
+    render_finished_semaphores: Vec<vk::Semaphore>,
     //一度に1フレームしかレンダリングしないようにCPU側で止めるためのFence
-    in_flight_fence: vk::Fence,
+    in_flight_fences: Vec<vk::Fence>,
 }
 
 impl VulkanApp {
@@ -119,10 +127,11 @@ impl VulkanApp {
         let command_pool =
             Self::create_command_pool(&instance, &surface, surface_khr, physical_device, &device);
 
-        let command_buffers = Self::create_command_buffer(&device, command_pool);
+        let command_buffers =
+            Self::create_command_buffers(&device, command_pool, MAX_FRAMES_IN_FLIGHT);
 
-        let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
-            Self::create_sync_objects(&device);
+        let (image_available_semaphores, render_finished_semaphores, in_flight_fences) =
+            Self::create_sync_objects(&device, MAX_FRAMES_IN_FLIGHT);
 
         Ok(Self {
             entry,
@@ -146,24 +155,34 @@ impl VulkanApp {
             swap_chain_frame_buffers,
             command_pool,
             command_buffers,
-            image_available_semaphore,
-            render_finished_semaphore,
-            in_flight_fence,
+            current_frame: 0,
+            image_available_semaphores,
+            render_finished_semaphores,
+            in_flight_fences,
         })
     }
 
-    fn draw_frame(&self) {
-        //配列の0番目を使用
-        let command_buffer = *self.command_buffers.first().unwrap();
+    fn draw_frame(&mut self, frame_size: usize) {
+        //フレームに対して書き込むために使用するCommandBufferやSemaphoreやFenceを取得する
+        let command_buffer = *self.command_buffers.get(self.current_frame).unwrap();
+        let image_available_semaphore = *self
+            .image_available_semaphores
+            .get(self.current_frame)
+            .unwrap();
+        let render_finished_semaphore = *self
+            .render_finished_semaphores
+            .get(self.current_frame)
+            .unwrap();
+        let in_flight_fence = *self.in_flight_fences.get(self.current_frame).unwrap();
 
         unsafe {
             //Fenceの待機
             //第二引数は配列で受け取った全てのFenceを待つかどうか
             self.device
-                .wait_for_fences(&[self.in_flight_fence], true, u64::MAX)
+                .wait_for_fences(&[in_flight_fence], true, u64::MAX)
                 .unwrap();
 
-            self.device.reset_fences(&[self.in_flight_fence]).unwrap();
+            self.device.reset_fences(&[in_flight_fence]).unwrap();
 
             //swapchainからImageを取得する
             //swap_chain_imagesの配列のIndexが帰ってくる
@@ -175,7 +194,7 @@ impl VulkanApp {
                     //MAXを入れるとタイムアウトを無効にできる
                     u64::MAX,
                     //このセマフォはシグナルが送られる
-                    self.image_available_semaphore,
+                    image_available_semaphore,
                     vk::Fence::null(),
                 )
                 .unwrap()
@@ -194,7 +213,7 @@ impl VulkanApp {
             //キューをGPUにSubmitする
             let submit_info = vk::SubmitInfo::builder()
                 //どのセマフォを使用して待機するか
-                .wait_semaphores(&[self.image_available_semaphore])
+                .wait_semaphores(&[image_available_semaphore])
                 //どのステージで待機するかを指定
                 //今回は画像が利用可能になるまで待ちたいのでCOLOR_ATTACHMENT_OUTPUTを使用
                 //この配列はインデックスで上記のsemaphoreの配列と対応する
@@ -203,21 +222,21 @@ impl VulkanApp {
                 //実行するコマンドバッファを指定
                 .command_buffers(&[command_buffer])
                 //ここで指定したセマフォに対してこのsubmitが終了した時にシグナルを送る
-                .signal_semaphores(&[self.render_finished_semaphore])
+                .signal_semaphores(&[render_finished_semaphore])
                 .build();
 
             //graphics_queueをsubmitする
             //in_flight_fenceに対してシグナルを送るように
             self.device
                 //queueへのsubmitは非常に処理として重たいので複数のsubmit_infoを一回で渡せるようになっている
-                .queue_submit(self.graphics_queue, &[submit_info], self.in_flight_fence)
+                .queue_submit(self.graphics_queue, &[submit_info], in_flight_fence)
                 .unwrap();
 
             //Presentation
 
             let present_info = vk::PresentInfoKHR::builder()
                 //待機するセマフォを指定
-                .wait_semaphores(&[self.render_finished_semaphore])
+                .wait_semaphores(&[render_finished_semaphore])
                 .swapchains(&[self.swap_chain_khr])
                 //swapchainに対するimageを指定
                 .image_indices(&[image_index])
@@ -232,9 +251,11 @@ impl VulkanApp {
                 .queue_present(self.present_queue, &present_info)
                 .unwrap();
         }
+
+        self.current_frame = (self.current_frame + 1) % frame_size;
     }
 
-    pub fn run(self, event_loop: EventLoop<()>) {
+    pub fn run(mut self, event_loop: EventLoop<()>) {
         info!("Running application");
 
         event_loop.run(move |event, _, control_flow| {
@@ -262,7 +283,7 @@ impl VulkanApp {
                 _ => (),
             }
 
-            self.draw_frame();
+            self.draw_frame(MAX_FRAMES_IN_FLIGHT as usize);
         });
     }
 
@@ -966,7 +987,11 @@ impl VulkanApp {
     }
 
     //Command Bufferは所属するCommand Poolが破棄されるタイミングで自動的に破棄される
-    fn create_command_buffer(device: &Device, command_pool: CommandPool) -> Vec<vk::CommandBuffer> {
+    fn create_command_buffers(
+        device: &Device,
+        command_pool: CommandPool,
+        size: u32,
+    ) -> Vec<vk::CommandBuffer> {
         let alloc_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(command_pool)
             //コマンドバッファがプライマリなのかセカンダリなのを指定
@@ -974,7 +999,7 @@ impl VulkanApp {
             //SECONDARY: 直接キューに対してサブミットすることは出来ないがプライマリコマンドバッファから間接的に呼び出すことができる
             //SECONDARYは共通の操作をまとめて再利用したりする時に便利
             .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1)
+            .command_buffer_count(size)
             .build();
 
         unsafe { device.allocate_command_buffers(&alloc_info).unwrap() }
@@ -1071,7 +1096,10 @@ impl VulkanApp {
         unsafe { self.device.end_command_buffer(command_buffer).unwrap() };
     }
 
-    fn create_sync_objects(device: &Device) -> (vk::Semaphore, vk::Semaphore, vk::Fence) {
+    fn create_sync_objects(
+        device: &Device,
+        size: u32,
+    ) -> (Vec<vk::Semaphore>, Vec<vk::Semaphore>, Vec<vk::Fence>) {
         //SemaphoreCreateInfoは今のところsTypeは必須ではなく今後のバージョンによりflagsやpNextが追加される可能性がある
         let semaphore_info = vk::SemaphoreCreateInfo::builder().build();
 
@@ -1082,17 +1110,23 @@ impl VulkanApp {
             .flags(vk::FenceCreateFlags::SIGNALED)
             .build();
 
-        let image_available_semaphore =
-            unsafe { device.create_semaphore(&semaphore_info, None).unwrap() };
-        let render_finished_semaphore =
-            unsafe { device.create_semaphore(&semaphore_info, None).unwrap() };
+        let mut image_available_semaphores = vec![];
+        let mut render_finished_semaphores = vec![];
+        let mut in_flight_fences = vec![];
 
-        let in_flight_fence = unsafe { device.create_fence(&fence_info, None).unwrap() };
+        for _ in 0..size {
+            image_available_semaphores
+                .push(unsafe { device.create_semaphore(&semaphore_info, None).unwrap() });
+            render_finished_semaphores
+                .push(unsafe { device.create_semaphore(&semaphore_info, None).unwrap() });
+
+            in_flight_fences.push(unsafe { device.create_fence(&fence_info, None).unwrap() });
+        }
 
         (
-            image_available_semaphore,
-            render_finished_semaphore,
-            in_flight_fence,
+            image_available_semaphores,
+            render_finished_semaphores,
+            in_flight_fences,
         )
     }
 }
@@ -1122,12 +1156,17 @@ impl Drop for VulkanApp {
 
             self.device.destroy_command_pool(self.command_pool, None);
 
-            self.device
-                .destroy_semaphore(self.image_available_semaphore, None);
-            self.device
-                .destroy_semaphore(self.render_finished_semaphore, None);
+            for semaphore in self.image_available_semaphores.clone() {
+                self.device.destroy_semaphore(semaphore, None);
+            }
 
-            self.device.destroy_fence(self.in_flight_fence, None);
+            for semaphore in self.render_finished_semaphores.clone() {
+                self.device.destroy_semaphore(semaphore, None);
+            }
+
+            for fence in self.in_flight_fences.clone() {
+                self.device.destroy_fence(fence, None);
+            }
 
             if let Some(debug_utils) = &self.debug_utils {
                 debug_utils.destroy_debug_utils_messenger(
