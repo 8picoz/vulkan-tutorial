@@ -1,22 +1,20 @@
 use crate::queue_family::QueueFamilyIndices;
 use crate::required_names::get_required_device_extensions;
 use crate::swap_chain_utils::SwapChainSupportDetails;
-use crate::{debug, khr_util};
+use crate::{debug, khr_util, WindowHandlers};
 use ash::extensions::khr::{Surface, Swapchain};
 use ash::vk::{
     CommandPool, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, Format, PhysicalDevice,
     Pipeline, Queue, SharingMode, SurfaceKHR, SwapchainKHR,
 };
 use ash::{extensions::ext::DebugUtils, vk, Device, Entry, Instance};
-use core::panicking::panic;
 use log::{debug, info};
-use std::mem::swap;
-use std::panic::resume_unwind;
 use std::{
     error::Error,
     ffi::{c_void, CStr, CString},
     result::Result,
 };
+use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
@@ -35,6 +33,10 @@ pub const REQUIRED_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 //2という数字を選んだのはCPUがGPUに対して選考しすぎないようにするため
 //ここらへんの設定やFenceなどが垂直同期に対して関わってくるのだと思う
 pub const MAX_FRAMES_IN_FLIGHT: u32 = 2;
+
+//初期サイズ
+const WIDTH: u32 = 800;
+const HEIGHT: u32 = 800;
 
 //メンバをOption<>地獄にしないためにはnewに関する関数をメソッドではなく関連関数にすることで回避する
 pub struct VulkanApp {
@@ -64,6 +66,7 @@ pub struct VulkanApp {
     command_pool: CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
     current_frame: usize,
+    resize: Option<(u32, u32)>,
 
     //これ移行がVecになっているのは複数のフレームを同時にレンダリングするときに複数必要になるため
     //swapchainからimageを取得してレンダリングの準備ができたことを知らせるSemaphore
@@ -107,7 +110,14 @@ impl VulkanApp {
         );
 
         let (swap_chain, swap_chain_khr, swap_chain_image_format, swap_chain_extent) =
-            Self::create_swap_chain(&instance, &device, physical_device, &surface, surface_khr);
+            Self::create_swap_chain(
+                &instance,
+                &device,
+                physical_device,
+                &surface,
+                surface_khr,
+                (WIDTH, HEIGHT),
+            );
 
         //imageのLifetimeはswapchainに紐づいているので明示的にDestoryする必要はない
         let swap_chain_images = Self::get_swap_chain_images(&swap_chain, swap_chain_khr);
@@ -161,6 +171,7 @@ impl VulkanApp {
             command_pool,
             command_buffers,
             current_frame: 0,
+            resize: None,
             image_available_semaphores,
             render_finished_semaphores,
             in_flight_fences,
@@ -186,8 +197,6 @@ impl VulkanApp {
             self.device
                 .wait_for_fences(&[in_flight_fence], true, u64::MAX)
                 .unwrap();
-
-            self.device.reset_fences(&[in_flight_fence]).unwrap();
 
             //swapchainからImageを取得する
             //.0はswap_chain_imagesの配列のIndexが帰ってくる
@@ -215,6 +224,10 @@ impl VulkanApp {
                     panic!("{}", error);
                 }
             };
+
+            //リセットをこの位置に置くことでrecreate_swap_chainのタイミングでreturnすることによるデッドロックを回避することが出来る
+            //リセットしてるのにsignalを送る人がいないという状況を回避する
+            self.device.reset_fences(&[in_flight_fence]).unwrap();
 
             //コマンドバッファをリセットする
             self.device
@@ -266,52 +279,64 @@ impl VulkanApp {
                 .queue_present(self.present_queue, &present_info);
 
             match result {
+                Ok(is_suboptimal) if is_suboptimal => {
+                    self.recreate_swap_chain();
+                }
                 Ok(_) => {}
                 //SUBOPTIMAL_KHR
                 //swapchainはsurfaceに正常にpresentすることは出来るが、プロパティは完全に一致していない
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                     self.recreate_swap_chain();
-                    return;
                 }
                 Err(error) => {
                     panic!("{}", error);
                 }
+            }
+
+            //二回recreate_swap_chainが呼ばれることになりそう
+            if self.resize.is_some() {
+                self.recreate_swap_chain();
             }
         }
 
         self.current_frame = (self.current_frame + 1) % frame_size;
     }
 
-    pub fn run(mut self, event_loop: EventLoop<()>) {
+    pub fn run(mut self, window_handlers: WindowHandlers) {
         info!("Running application");
 
-        event_loop.run(move |event, _, control_flow| {
-            *control_flow = ControlFlow::Poll;
+        window_handlers
+            .event_loop
+            .run(move |event, _, control_flow| {
+                *control_flow = ControlFlow::Poll;
+                self.resize = None;
 
-            match event {
-                Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::CloseRequested => {
-                        unsafe { self.device.device_wait_idle().unwrap() };
-                        *control_flow = ControlFlow::Exit;
+                if let Event::WindowEvent { event, .. } = event {
+                    match event {
+                        WindowEvent::CloseRequested => {
+                            unsafe { self.device.device_wait_idle().unwrap() };
+                            *control_flow = ControlFlow::Exit;
+                        }
+                        WindowEvent::Resized(physical_size) => {
+                            self.resize = Some((physical_size.width, physical_size.height));
+                        }
+                        WindowEvent::KeyboardInput {
+                            input:
+                                KeyboardInput {
+                                    virtual_keycode: Some(VirtualKeyCode::Space),
+                                    state: ElementState::Released,
+                                    ..
+                                },
+                            ..
+                        } => {
+                            info!("Space!");
+                        }
+                        _ => (),
                     }
-                    WindowEvent::KeyboardInput {
-                        input:
-                            KeyboardInput {
-                                virtual_keycode: Some(VirtualKeyCode::Space),
-                                state: ElementState::Released,
-                                ..
-                            },
-                        ..
-                    } => {
-                        info!("Space!");
-                    }
-                    _ => (),
-                },
-                _ => (),
-            }
+                }
 
-            self.draw_frame(MAX_FRAMES_IN_FLIGHT as usize);
-        });
+                self.draw_frame(MAX_FRAMES_IN_FLIGHT as usize);
+            });
     }
 
     pub fn recreate_swap_chain(&mut self) {
@@ -320,34 +345,52 @@ impl VulkanApp {
 
         self.cleanup_swap_chain();
 
-        let swap_chain = Self::create_swap_chain(
-            &self.instance,
-            &self.device,
-            self.physical_device,
-            &self.surface,
-            self.surface_khr,
-        );
+        let (width, height) = self
+            .resize
+            .unwrap_or((self.swap_chain_extent.width, self.swap_chain_extent.height));
+
+        info!("width: {}, height: {}", width, height);
+
+        let (swap_chain, swap_chain_khr, swap_chain_image_format, swap_chain_extent) =
+            Self::create_swap_chain(
+                &self.instance,
+                &self.device,
+                self.physical_device,
+                &self.surface,
+                self.surface_khr,
+                (width, height),
+            );
+
+        self.swap_chain = swap_chain;
+        self.swap_chain_khr = swap_chain_khr;
+        self.swap_chain_image_format = swap_chain_image_format;
+        self.swap_chain_extent = swap_chain_extent;
+
+        self.swap_chain_images = Self::get_swap_chain_images(&self.swap_chain, self.swap_chain_khr);
 
         //image_viewはswapchainに紐づいているので再作成しなければいけない
-        let image_views = Self::create_image_views(
+        self.swap_chain_image_views = Self::create_image_views(
             &self.device,
             &self.swap_chain_images,
             self.swap_chain_image_format,
         );
 
         //swapchain imageのformatに依存するため再作成
-        let render_pass = Self::create_render_pass(&self.device, self.swap_chain_image_format);
+        self.render_pass = Self::create_render_pass(&self.device, self.swap_chain_image_format);
 
         //viewportとscissor rectがpipelineの作成時に指定されるので再作成
         //ただし再作成をしなくてもdynamic stateを使用すれば良い
-        let graphics_pipeline =
-            Self::create_graphics_pipeline(&self.device, self.swap_chain_extent, render_pass);
+        let (pipeline, pipeline_layout) =
+            Self::create_graphics_pipeline(&self.device, self.swap_chain_extent, self.render_pass);
+
+        self.pipeline = pipeline;
+        self.pipeline_layout = pipeline_layout;
 
         //swapchainに依存するので再作成
-        let framebuffers = Self::create_frame_buffers(
+        self.swap_chain_frame_buffers = Self::create_frame_buffers(
             &self.device,
-            render_pass,
-            image_views,
+            self.render_pass,
+            self.swap_chain_image_views.clone(),
             self.swap_chain_extent,
         );
     }
@@ -533,13 +576,14 @@ impl VulkanApp {
         physical_device: PhysicalDevice,
         surface: &Surface,
         surface_khr: SurfaceKHR,
+        window_size: (u32, u32),
     ) -> (Swapchain, SwapchainKHR, vk::Format, vk::Extent2D) {
         let swap_chain_support =
             SwapChainSupportDetails::new(physical_device, surface, surface_khr);
 
         let surface_format = swap_chain_support.choose_swap_surface_format();
         let present_mode = swap_chain_support.choose_swap_present_mode();
-        let extent = swap_chain_support.choose_swap_extent();
+        let extent = swap_chain_support.choose_swap_extent(window_size.0, window_size.1);
 
         //swapchainに含められる画像の枚数を決める
         //少なすぎると空き容量がなくてレンダリングが止まってしまう

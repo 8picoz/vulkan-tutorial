@@ -1,5 +1,4 @@
 extern crate core;
-extern crate core;
 
 use crate::window_handlers::WindowHandlers;
 
@@ -23,7 +22,7 @@ fn main() {
     let window_handlers = WindowHandlers::new();
 
     match vulkan_app::VulkanApp::new(&window_handlers.window) {
-        Ok(app) => app.run(window_handlers.event_loop),
+        Ok(app) => app.run(window_handlers),
         Err(error) => log::error!("Failed to create application. Cause: {}", error),
     }
 }

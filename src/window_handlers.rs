@@ -17,7 +17,7 @@ impl WindowHandlers {
         let window = WindowBuilder::new()
             .with_title("vulkan_tutorial")
             .with_inner_size(winit::dpi::LogicalSize::new(800.0f32, 800.0f32))
-            .with_resizable(false)
+            .with_resizable(true)
             .build(&event_loop)
             .unwrap();
 

@@ -8,9 +8,6 @@ pub struct SwapChainSupportDetails {
     pub present_modes: Vec<vk::PresentModeKHR>,
 }
 
-const WIDTH: u32 = 800;
-const HEIGHT: u32 = 800;
-
 impl SwapChainSupportDetails {
     pub fn new(
         physical_device: vk::PhysicalDevice,
@@ -66,15 +63,15 @@ impl SwapChainSupportDetails {
         vk::PresentModeKHR::FIFO
     }
 
-    pub fn choose_swap_extent(&self) -> vk::Extent2D {
+    pub fn choose_swap_extent(&self, width: u32, height: u32) -> vk::Extent2D {
         if self.capabilities.current_extent.width != u32::MAX {
             return self.capabilities.current_extent;
         }
 
         let min = self.capabilities.min_image_extent;
         let max = self.capabilities.max_image_extent;
-        let width = WIDTH.min(max.width).max(min.width);
-        let height = HEIGHT.min(max.height).max(min.height);
+        let width = width.min(max.width).max(min.width);
+        let height = height.min(max.height).max(min.height);
 
         vk::Extent2D { width, height }
     }
