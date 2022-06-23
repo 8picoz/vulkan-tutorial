@@ -340,6 +340,15 @@ impl VulkanApp {
     }
 
     pub fn recreate_swap_chain(&mut self) {
+        //最小化対応
+        //最小化時にここで待機させることによって対応させる
+        //今の構成だと出来ない気もする
+        // if let Some(size) = self.resize {
+        //     while size.0 == 0 || size.1 == 0 {
+        //         self.run();
+        //     }
+        // }
+
         //swapchainが使用されている時に触るのは良くないのでdeviceがidle状態になるのを待つ
         unsafe { self.device.device_wait_idle().unwrap() };
 
@@ -421,7 +430,7 @@ impl VulkanApp {
             .application_version(0)
             .engine_name(CString::new("No Engine")?.as_c_str()) //エンジン名を入力するとそれが既知なエンジンだったらそれように最適化をする
             .engine_version(0)
-            .api_version(vk::make_api_version(0, 1, 2, 0)) //Vulkan自体のバージョン
+            .api_version(vk::make_api_version(0, 1, 3, 0)) //Vulkan自体のバージョン
             .build();
 
         let mut extension_names = khr_util::require_extension_names(); //本家チュートリアルではgetRequiredExtensions(glfwGetRequiredInstanceExtensions)
